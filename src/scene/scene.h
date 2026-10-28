@@ -3,7 +3,7 @@
 #include "core/vmath.h"
 #define MAX_ENTITIES 256
 
-typedef enum { MESH_NONE, MESH_CUBE, MESH_SPHERE } MeshType;
+typedef enum { MESH_NONE, MESH_CUBE, MESH_SPHERE, MESH_OBJ } MeshType;
 typedef enum { BODY_NONE, BODY_STATIC, BODY_DYNAMIC } BodyType;
 
 typedef struct {
@@ -11,6 +11,8 @@ typedef struct {
     int active;
     Vec3 pos, rot /* degrees, yaw = rot.y */, scale, color;
     MeshType mesh;
+    char mesh_path[64];     /* for MESH_OBJ: assets/ or project assets/ */
+    char tex_path[64];
     int checker;
     BodyType body;
     int controller;         /* dynamic body driven by 'walk' blocks */

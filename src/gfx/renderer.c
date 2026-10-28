@@ -1,7 +1,10 @@
 #include "gfx/renderer.h"
+#include "gfx/assets.h"
 #include "gfx/glload.h"
 #include "core/log.h"
+#include <GLFW/glfw3.h>
 #include <stdlib.h>
+#include <string.h>
 
 static const char *VS =
     "#version 330 core\n"
@@ -25,9 +28,10 @@ static const char *FS =
     "  o = vec4(pow(col, vec3(1.0 / 2.2)), 1.0); }\n";
 
 typedef struct { unsigned vao, vbo; int count; } Mesh;
-static Mesh meshes[3]; /* indexed by MeshType */
+static Mesh meshes[3];
 static unsigned prog;
 static int u_vp, u_model, u_nrm, u_color, u_checker, u_highlight;
+static Mat4 Gvp;
 
 static unsigned compile_shader(unsigned type, const char *src) {
     unsigned s = vgl.CreateShader(type);
@@ -112,16 +116,24 @@ void renderer_begin(int w, int h, Vec3 sky) {
     vgl.UseProgram(prog);
 }
 
-void renderer_set_view_proj(Mat4 vp) { vgl.UniformMatrix4fv(u_vp, 1, 0, vp.m); }
+void renderer_set_view_proj(Mat4 vp) { Gvp = vp; vgl.UniformMatrix4fv(u_vp, 1, 0, vp.m); }
 
-void renderer_draw_entity(const Entity *e, int highlight) {
-    if (e->mesh == MESH_NONE) return;
+/* Shared with assets.c */
+struct AObj { unsigned vao, vbo; int count; char path[128]; };
+extern struct AObj assets_meshes[32];
+extern int assets_nmeshes;
+void renderer_draw_obj(int mesh_id, const Entity *e, int highlight) {
+    if (mesh_id < 0 || mesh_id >= assets_nmeshes) return;
+    if (assets_meshes[mesh_id].count <= 0) return;
+    vgl.UseProgram(prog);
     Mat4 model = entity_model(e), nrm = entity_normal_matrix(e);
+    vgl.UniformMatrix4fv(u_vp, 1, 0, Gvp.m);
     vgl.UniformMatrix4fv(u_model, 1, 0, model.m);
     vgl.UniformMatrix4fv(u_nrm, 1, 0, nrm.m);
-    vgl.Uniform3f(u_color, e->color.x, e->color.y, e->color.z);
-    vgl.Uniform1f(u_checker, e->checker ? 1.0f : 0.0f);
+    Vec3 col = highlight ? v3(fminf(e->color.x + 0.25f, 1), fminf(e->color.y + 0.25f, 1), fminf(e->color.z + 0.25f, 1)) : e->color;
+    vgl.Uniform3f(u_color, col.x, col.y, col.z);
+    vgl.Uniform1f(u_checker, 0.0f);
     vgl.Uniform1f(u_highlight, highlight ? 1.0f : 0.0f);
-    vgl.BindVertexArray(meshes[e->mesh].vao);
-    glDrawArrays(GL_TRIANGLES, 0, meshes[e->mesh].count);
+    vgl.BindVertexArray(assets_meshes[mesh_id].vao);
+    glDrawArrays(GL_TRIANGLES, 0, assets_meshes[mesh_id].count);
 }

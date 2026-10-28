@@ -5,6 +5,7 @@
 #include "platform/fs.h"
 #include "gui/gui.h"
 #include "gfx/renderer.h"
+#include "gfx/assets.h"
 #include "scene/scene.h"
 #include "physics/physics.h"
 #include "blocks/blocks.h"
@@ -295,9 +296,14 @@ int engine_run(const char *scene_path, const char *argv0) {
                     if (G.mode != MODE_MENU) {
                         Mat4 proj = m4_perspective(DEG2RAD(60.0f), (float)w / (float)h, 0.1f, 500.0f);
                         renderer_set_view_proj(m4_mul(proj, make_view()));
-                        for (int i = 0; i < G.scene.count; i++)
-                            if (G.scene.e[i].active)
-                                renderer_draw_entity(&G.scene.e[i], G.mode == MODE_EDIT && i == G.selected);
+                        for (int i = 0; i < G.scene.count; i++) {
+                            if (!G.scene.e[i].active) continue;
+                            if (G.scene.e[i].mesh == MESH_OBJ && G.scene.e[i].mesh_path[0]) {
+                                int m = assets_load_obj(G.scene.e[i].mesh_path);
+                                if (m >= 0) { renderer_draw_obj(m, &G.scene.e[i], G.mode == MODE_EDIT && i == G.selected); continue; }
+                            }
+                            renderer_draw_entity(&G.scene.e[i], G.mode == MODE_EDIT && i == G.selected);
+                        }
                     }
                 }
             }

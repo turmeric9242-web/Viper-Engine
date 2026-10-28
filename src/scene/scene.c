@@ -5,7 +5,7 @@
 #include <stdlib.h>
 #include <ctype.h>
 
-static const char *MESH_NAMES[] = {"none", "cube", "sphere"};
+static const char *MESH_NAMES[] = {"none", "cube", "sphere", "obj"};
 static const char *BODY_NAMES[] = {"none", "static", "dynamic"};
 
 static void copy_str(char *dst, size_t n, const char *src) {
@@ -52,7 +52,9 @@ int scene_load(Scene *s, const char *path) {
             continue;
         }
         if (!cur) { VLOG("%s:%d: '%s' outside entity", path, ln, key); continue; }
-        if (!strcmp(key, "mesh")) { int m = lookup(MESH_NAMES, 3, rest); if (m >= 0) cur->mesh = (MeshType)m; }
+        if (!strcmp(key, "mesh")) { int m = lookup(MESH_NAMES, 4, rest); if (m >= 0) cur->mesh = (MeshType)m; }
+        else if (!strcmp(key, "mesh_path")) copy_str(cur->mesh_path, sizeof cur->mesh_path, rest);
+        else if (!strcmp(key, "tex_path")) copy_str(cur->tex_path, sizeof cur->tex_path, rest);
         else if (!strcmp(key, "body")) { int b = lookup(BODY_NAMES, 3, rest); if (b >= 0) cur->body = (BodyType)b; }
         else if (!strcmp(key, "pos")) { sscanf(rest, "%f %f %f", &cur->pos.x, &cur->pos.y, &cur->pos.z); cur->spawn = cur->pos; }
         else if (!strcmp(key, "rot")) sscanf(rest, "%f %f %f", &cur->rot.x, &cur->rot.y, &cur->rot.z);
@@ -78,6 +80,8 @@ int scene_save(const Scene *s, const char *path) {
         fprintf(f, "\nentity %s\n  mesh %s\n  pos %g %g %g\n  rot %g %g %g\n  scale %g %g %g\n  color %g %g %g\n",
                 e->name, MESH_NAMES[e->mesh], e->pos.x, e->pos.y, e->pos.z, e->rot.x, e->rot.y, e->rot.z,
                 e->scale.x, e->scale.y, e->scale.z, e->color.x, e->color.y, e->color.z);
+        if (e->mesh_path[0]) fprintf(f, "  mesh_path %s\n", e->mesh_path);
+        if (e->tex_path[0]) fprintf(f, "  tex_path %s\n", e->tex_path);
         if (e->checker) fprintf(f, "  checker 1\n");
         if (e->body) fprintf(f, "  body %s\n", BODY_NAMES[e->body]);
         if (e->controller) fprintf(f, "  controller 1\n");

@@ -14,9 +14,10 @@ This C engine is the professional rewrite. Status below tracks what is ported an
 | Edit/Play/Stop with scene restore | ✅ v0.1 |
 | Project management (make/open projects) | ✅ v0.2 (project browser GUI) |
 | "Compile" a project (standalone export) | ✅ v0.2 (exports/<name>/ + run.bat) |
-| OBJ/MTL + texture loading, texture atlas | ⬜ planned v0.3 |
+| OBJ mesh loading (v, f with fan triangulation, vn normals) | ✅ v0.3 (`assets.c`, `mesh obj` in .vscene) |
+| PNG/JPG texture loading (stb_image) | ✅ v0.3 (`assets_load_texture`, ready to bind) |
 | Merged static world (2 draw calls) + frustum culling | ⬜ planned v0.3+ |
-| Transform gizmo (move/scale/rotate), multi-select, undo | ⬜ planned v0.3 |
+| Transform gizmo (move/scale/rotate), multi-select, undo | ⬜ planned v0.3+ |
 | Inspector/hierarchy GUI panels (ImGui) | ⬜ planned v0.3–0.4 |
 | Baked lightmap (top-down, rotate+sweep, AO, denoise) | ⬜ planned v0.4 |
 | Baked occlusion culling (3D PVS, eye-position sampling) | ⬜ planned v0.4–0.5 |
