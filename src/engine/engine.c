@@ -1112,7 +1112,7 @@ static int play_look_target(void) {
     Vec3 o = G.pl.eye, d = pl_forward();
     for (int i = 0; i < G.scene.count; i++) {
         const Entity *e = &G.scene.e[i];
-        if (i == G.pl.player || !e->active || e->body == BODY_NONE) continue;
+        if (i == G.pl.player || !e->active) continue;
         if (e->script_id < 0) continue; /* play.py only hints scripted units */
         if (!entity_boxes(e, &lo, &hi)) continue;
         if (ray_aabb(o, d, lo, hi, &t) && t < bt) { bt = t; best = i; }
@@ -1752,7 +1752,8 @@ int engine_run(const char *scene_path, const char *argv0, int play_only) {
                 }
             } else {
                 if (in->pressed[VKEY_F5]) {
-                    if (G.mode == MODE_EDIT) enter_play(); else exit_play();
+                    if (G.mode == MODE_EDIT) enter_play();
+                    else if (!G.pl.standalone) exit_play();
                 } else if (in->pressed[VKEY_ESC]) {
                     if (G.mode == MODE_PLAY) exit_play(); else window_request_close(G.win);
                 }
