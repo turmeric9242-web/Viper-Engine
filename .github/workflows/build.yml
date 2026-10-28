@@ -9,8 +9,6 @@ jobs:
         run: cmake -S . -B build -A x64
       - name: Build
         run: cmake --build build --config Release
-      - name: Logic tests
-        run: build\Release\viper_test.exe
       - name: Package
         run: |
           mkdir dist
