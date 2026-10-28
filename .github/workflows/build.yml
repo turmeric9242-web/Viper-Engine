@@ -14,9 +14,13 @@ jobs:
         run: |
           mkdir dist
           copy build\Release\viper.exe dist\
+          copy README.md dist\
+          copy PARITY.md dist\
           xcopy /E /I /Y scenes dist\scenes
           xcopy /E /I /Y scripts dist\scripts
+          xcopy /E /I /Y assets dist\assets
+          xcopy /E /I /Y market dist\market
       - uses: actions/upload-artifact@v4
         with:
-          name: ViperEngine-v0.1-windows
+          name: ViperEngine-v0.4-windows
           path: dist

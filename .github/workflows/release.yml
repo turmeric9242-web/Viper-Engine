@@ -30,8 +30,12 @@ jobs:
         run: |
           mkdir dist
           copy build\Release\viper.exe dist\
+          copy README.md dist\
+          copy PARITY.md dist\
           xcopy /E /I /Y scenes dist\scenes
           xcopy /E /I /Y scripts dist\scripts
+          xcopy /E /I /Y assets dist\assets
+          xcopy /E /I /Y market dist\market
 
       - name: Zip
         run: Compress-Archive -Path dist\* -DestinationPath "ViperEngine-${{ inputs.version || github.ref_name }}.zip"
