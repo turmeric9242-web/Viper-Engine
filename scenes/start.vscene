@@ -9,13 +9,12 @@ entity Floor
 
 entity Player
   mesh cube
-  pos 0 1.5 0
+  pos 0 0.9 0
   scale 1 1.8 1
   color 0.9 0.3 0.25
   body dynamic
   controller 1
   script Player
-  follow 7 1.5
 
 entity Crate
   mesh cube

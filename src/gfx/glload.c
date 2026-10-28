@@ -12,5 +12,6 @@ int vgl_load(void) {
     LOAD(GetUniformLocation); LOAD(UniformMatrix4fv); LOAD(Uniform3f); LOAD(Uniform1f);
     LOAD(GenVertexArrays); LOAD(BindVertexArray); LOAD(GenBuffers); LOAD(BindBuffer);
     LOAD(BufferData); LOAD(VertexAttribPointer); LOAD(EnableVertexAttribArray);
+    LOAD(Uniform1i); LOAD(Uniform4f); LOAD(ActiveTexture); LOAD(TexImage3D);
     return 1;
 }

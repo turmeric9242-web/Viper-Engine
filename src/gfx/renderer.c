@@ -23,7 +23,10 @@ static const char *FS =
     "#version 330 core\n"
     "in vec3 v_n; in vec3 v_wp; in vec4 v_vc;\n"
     "uniform vec3 u_color; uniform float u_checker; uniform float u_highlight;\n"
-    "uniform float u_use_vcol;\n"
+    "uniform float u_use_vcol; uniform float u_unlit;\n"
+    "uniform sampler2D u_lm; uniform vec4 u_lmb; uniform float u_use_lm;\n"
+    "uniform sampler3D u_pr; uniform vec3 u_prb; uniform vec3 u_prs; uniform float u_use_pr;\n"
+    "uniform vec3 u_cam; uniform vec4 u_fog;\n"
     "out vec4 o;\n"
     "void main(){\n"
     "  vec3 n = normalize(v_n); vec3 l = normalize(vec3(0.4, 1.0, 0.3));\n"
@@ -32,13 +35,32 @@ static const char *FS =
     "  float chk = u_use_vcol > 0.5 ? v_vc.a : u_checker;\n"
     "  if (chk > 0.5) { float k = mod(floor(v_wp.x) + floor(v_wp.z), 2.0); c *= mix(0.75, 1.0, k); }\n"
     "  vec3 col = c * (0.28 + 0.72 * d);\n"
+    "  if (u_unlit < 0.5) {\n"
+    "    if (u_use_pr > 0.5) {\n"
+    "      vec3 uv = clamp((v_wp - u_prb) * u_prs, 0.0, 1.0);\n"
+    "      col *= 0.35 + 1.5 * texture(u_pr, uv).rgb;\n"
+    "    } else if (u_use_lm > 0.5) {\n"
+    "      vec2 uv = clamp((v_wp.xz - u_lmb.xy) * u_lmb.zw, 0.0, 1.0);\n"
+    "      col *= 0.35 + 1.5 * texture(u_lm, uv).rgb;\n"
+    "    }\n"
+    "  } else { col = c; }\n"
     "  col = mix(col, vec3(1.0, 0.85, 0.2), u_highlight * 0.35);\n"
+    "  float dist = length(v_wp - u_cam);\n"
+    "  float fog = u_fog.y > u_fog.x ? clamp((dist - u_fog.x) / max(u_fog.y - u_fog.x, 1e-3), 0.0, 1.0) : 0.0;\n"
+    "  col = mix(col, vec3(0.55, 0.68, 0.85), fog);\n"
     "  o = vec4(pow(col, vec3(1.0 / 2.2)), 1.0); }\n";
 
 typedef struct { unsigned vao, vbo; int count; } Mesh;
 static Mesh meshes[4]; /* [0]=unused none, [1]=cube, [2]=sphere, [3]=merged static batch */
 static unsigned prog;
 static int u_vp, u_model, u_nrm, u_color, u_checker, u_highlight, u_use_vcol, u_unlit;
+static int u_lm, u_lmb, u_use_lm, u_pr, u_prb, u_prs, u_use_pr;
+static int u_cam, u_fog;
+static Vec3 cam_pos = {0, 0, 0};
+static float fog_start = 1e5f, fog_end = 2e5f;
+static unsigned lm_tex, pr_tex;
+static float lm_bounds[4] = {0, 0, 1, 1};
+static float pr_min[3] = {0, 0, 0}, pr_scale[3] = {1, 1, 1};
 static Mat4 Gvp;
 
 /* ---- frustum (6 planes extracted from Gvp, Gribb-Hartmann) ---- */
@@ -257,11 +279,85 @@ int renderer_init(void) {
     u_checker = vgl.GetUniformLocation(prog, "u_checker"); u_highlight = vgl.GetUniformLocation(prog, "u_highlight");
     u_use_vcol = vgl.GetUniformLocation(prog, "u_use_vcol");
     u_unlit = vgl.GetUniformLocation(prog, "u_unlit");
+    u_lm = vgl.GetUniformLocation(prog, "u_lm");         u_lmb = vgl.GetUniformLocation(prog, "u_lmb");
+    u_use_lm = vgl.GetUniformLocation(prog, "u_use_lm");
+    u_pr = vgl.GetUniformLocation(prog, "u_pr");         u_prb = vgl.GetUniformLocation(prog, "u_prb");
+    u_prs = vgl.GetUniformLocation(prog, "u_prs");       u_use_pr = vgl.GetUniformLocation(prog, "u_use_pr");
+    u_cam = vgl.GetUniformLocation(prog, "u_cam");       u_fog = vgl.GetUniformLocation(prog, "u_fog");
+    vgl.UseProgram(prog);
+    vgl.Uniform1i(u_lm, 0);
+    vgl.Uniform1i(u_pr, 1);
     build_cube(); build_sphere();
     glEnable(GL_DEPTH_TEST);
     glEnable(VGL_MULTISAMPLE);
     return 1;
 }
+
+/* Baked lighting: lightmap (world XZ) + light probe grid (world XYZ). */
+void renderer_set_lightmap(int w, int h, const unsigned char *rgb,
+                           float minx, float minz, float sizex, float sizez) {
+    if (!lm_tex) glGenTextures(1, &lm_tex);
+    glBindTexture(GL_TEXTURE_2D, lm_tex);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, 0x812F);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, 0x812F);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, w, h, 0, GL_RGB, GL_UNSIGNED_BYTE, rgb);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    lm_bounds[0] = minx; lm_bounds[1] = minz;
+    lm_bounds[2] = sizex > 1e-6f ? 1.0f / sizex : 0.0f;
+    lm_bounds[3] = sizez > 1e-6f ? 1.0f / sizez : 0.0f;
+}
+
+void renderer_clear_lightmap(void) {
+    if (lm_tex) { glDeleteTextures(1, &lm_tex); lm_tex = 0; }
+    vgl.UseProgram(prog);
+    vgl.Uniform1f(u_use_lm, 0.0f);
+}
+
+void renderer_set_probes(int nx, int ny, int nz, const unsigned char *rgb,
+                         float minx, float miny, float minz, float vx, float vy, float vz) {
+    if (!pr_tex) glGenTextures(1, &pr_tex);
+    glBindTexture(VGL_TEXTURE_3D, pr_tex);
+    glTexParameteri(VGL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(VGL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(VGL_TEXTURE_3D, GL_TEXTURE_WRAP_S, 0x812F);
+    glTexParameteri(VGL_TEXTURE_3D, GL_TEXTURE_WRAP_T, 0x812F);
+    glTexParameteri(VGL_TEXTURE_3D, 0x8072 /* WRAP_R */, 0x812F);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    vgl.TexImage3D(VGL_TEXTURE_3D, 0, GL_RGB, nx, ny, nz, 0, GL_RGB, GL_UNSIGNED_BYTE, rgb);
+    glBindTexture(VGL_TEXTURE_3D, 0);
+    pr_min[0] = minx; pr_min[1] = miny; pr_min[2] = minz;
+    pr_scale[0] = vx > 1e-6f ? 1.0f / vx : 0.0f;
+    pr_scale[1] = vy > 1e-6f ? 1.0f / vy : 0.0f;
+    pr_scale[2] = vz > 1e-6f ? 1.0f / vz : 0.0f;
+}
+
+void renderer_clear_probes(void) {
+    if (pr_tex) { glDeleteTextures(1, &pr_tex); pr_tex = 0; }
+    vgl.UseProgram(prog);
+    vgl.Uniform1f(u_use_pr, 0.0f);
+}
+
+static void bind_baked(void) {
+    vgl.UseProgram(prog);
+    vgl.Uniform1f(u_use_lm, lm_tex ? 1.0f : 0.0f);
+    vgl.Uniform1f(u_use_pr, pr_tex ? 1.0f : 0.0f);
+    vgl.Uniform4f(u_lmb, lm_bounds[0], lm_bounds[1], lm_bounds[2], lm_bounds[3]);
+    vgl.Uniform3f(u_prb, pr_min[0], pr_min[1], pr_min[2]);
+    vgl.Uniform3f(u_prs, pr_scale[0], pr_scale[1], pr_scale[2]);
+    vgl.Uniform3f(u_cam, cam_pos.x, cam_pos.y, cam_pos.z);
+    vgl.Uniform4f(u_fog, fog_start, fog_end, 0.0f, 0.0f);
+    vgl.ActiveTexture(VGL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, lm_tex);
+    vgl.ActiveTexture(VGL_TEXTURE0 + 1);
+    glBindTexture(VGL_TEXTURE_3D, pr_tex);
+    vgl.ActiveTexture(VGL_TEXTURE0);
+}
+
+void renderer_set_camera(Vec3 eye) { cam_pos = eye; }
+void renderer_set_fog(float start, float end) { fog_start = start; fog_end = end; }
 
 void renderer_begin(int w, int h, Vec3 sky) { renderer_begin_view(w, h, 0, 0, w, h, sky, sky); }
 
@@ -283,6 +379,7 @@ void renderer_begin_view(int fbw, int fbh, int vx, int vy, int vw, int vh, Vec3 
         glDisable(GL_SCISSOR_TEST);
     }
     vgl.UseProgram(prog);
+    bind_baked();
 }
 
 /* ---- immediate-style line batches (gizmo, selection boxes, grid, ghost) ----
@@ -340,10 +437,6 @@ void renderer_draw_entity(const Entity *e, int highlight) {
     if (e->mesh == MESH_CUBE || e->mesh == MESH_SPHERE) draw_mesh(&meshes[e->mesh], e, highlight);
 }
 
-/* Shared with assets.c */
-struct AObj { unsigned vao, vbo; int count; char path[128]; };
-extern struct AObj assets_meshes[32];
-extern int assets_nmeshes;
 void renderer_draw_obj(int mesh_id, const Entity *e, int highlight) {
     if (mesh_id < 0 || mesh_id >= assets_nmeshes) return;
     if (assets_meshes[mesh_id].count <= 0) return;

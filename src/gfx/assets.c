@@ -9,10 +9,15 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
 
-/* Shared with renderer.c (renderer_draw_obj) via extern. */
-struct AObj { unsigned vao, vbo; int count; char path[128]; };
-struct AObj assets_meshes[32];
+AObj assets_meshes[ASSETS_MAX_MESH];
 int assets_nmeshes;
+
+int assets_mesh_cpu(int id, const float **data, int *nfloats) {
+    if (id < 0 || id >= assets_nmeshes) return 0;
+    *data = assets_meshes[id].cpu;
+    *nfloats = assets_meshes[id].ncpu;
+    return assets_meshes[id].cpu != NULL;
+}
 
 static char *read_all(const char *path) {
     FILE *f = fopen(path, "r");
@@ -30,10 +35,14 @@ static char *read_all(const char *path) {
 }
 
 static int find_mesh(const char *path) {
+    if (!path || !path[0]) return -1;
     for (int i = 0; i < assets_nmeshes; i++)
         if (!strcmp(assets_meshes[i].path, path)) return i;
     return -1;
 }
+
+/* Worker-thread safe: never touches GL, only the already-loaded CPU cache. */
+int assets_find_obj(const char *path) { return find_mesh(path); }
 
 int assets_load_obj(const char *path) {
     int existing = find_mesh(path);
@@ -110,8 +119,9 @@ int assets_load_obj(const char *path) {
     vgl.BindVertexArray(0);
     m->count = no / 6;
     snprintf(m->path, sizeof m->path, "%s", path);
+    m->cpu = out;               /* handed to the baker, freed by assets_shutdown */
+    m->ncpu = no;
     VLOG("assets: %s -> %d verts", path, m->count);
-    free(out);
     return assets_nmeshes++;
 }
 
@@ -131,4 +141,6 @@ int assets_load_texture(const char *path) {
     return (int)tex;
 }
 
-void assets_shutdown(void) {}
+void assets_shutdown(void) {
+    for (int i = 0; i < assets_nmeshes; i++) { free(assets_meshes[i].cpu); assets_meshes[i].cpu = NULL; }
+}

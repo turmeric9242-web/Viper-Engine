@@ -100,6 +100,22 @@ typedef struct {
 int  gui_init(void *glfw_window);
 void gui_frame(GuiMenu *menu);
 void gui_editor_frame(GuiEditor *ed); /* full editor shell */
+
+/* Play mode HUD (play.py layout): fps line, messages, interact hint,
+   hud_left/hud_right, crosshair, health. No windows, never captures input. */
+typedef struct {
+    char fps[160];
+    int  nmsg;
+    char msg[5][160];
+    char hint[64];
+    int  nleft, nright;
+    char left[6][96];
+    char right[6][96];
+    float health;              /* 0..100 */
+    float dead;                /* >0 => dead overlay countdown */
+    int crosshair;
+} GuiHud;
+void gui_hud_frame(const GuiHud *hud);
 void gui_shutdown(void);
 
 #ifdef __cplusplus

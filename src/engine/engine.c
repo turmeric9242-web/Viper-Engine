@@ -9,7 +9,10 @@
 #include "scene/scene.h"
 #include "physics/physics.h"
 #include "blocks/blocks.h"
+#include "bake/bake.h"
+#include "core/thread.h"
 #include <stdio.h>
+#include <stdlib.h>
 #include <stdarg.h>
 #include <string.h>
 #include <math.h>
@@ -19,6 +22,48 @@ typedef enum { MODE_MENU, MODE_EDIT, MODE_PLAY } Mode;
 #define UNDO_MAX 16
 #define GRID_N 6
 static const float GRIDS[GRID_N] = {0.25f, 0.5f, 1.0f, 2.0f, 4.0f, 8.0f};
+static const char *BAKE_NAMES[3] = {"occlusion", "lightmap", "probes"};
+
+/* first-person gameplay state (play.py: EYE 1.6, walk 4.5, run 8, jump 7.5) */
+#define PL_EYE 1.6f
+#define PL_WALK 4.5f
+#define PL_RUN 8.0f
+#define PL_JUMP 7.5f
+#define PL_GRAVITY 22.0f
+#define PL_STEP 0.45f
+#define PL_MAX_HEALTH 100.0f
+#define PL_MSG_MAX 5
+
+typedef struct {
+    int on, player, standalone;
+    Vec3 eye, vel;
+    float yaw, pitch;          /* radians */
+    float health, dead_wait, time;
+    float hint_t;
+    int grounded, target, fog;
+    float fps;
+    char fps_txt[160];
+    char msg[PL_MSG_MAX][160];
+    float msg_t[PL_MSG_MAX];
+    int nmsg;
+    char left[6][96], right[6][96];
+    float hud_t[12];
+    int nleft, nright;
+} PlayMode;
+
+typedef struct {
+    int running, kind;         /* 0 occlusion | 1 lightmap | 2 probes */
+    volatile int cancel, done, ok;
+    volatile float progress;
+    TriSoup tris;
+    Scene scene;
+    VThread *thread;
+    BakedOcclusion oc;
+    BakedLightmap lm;
+    BakedProbes pr;
+    unsigned sig;
+    char error[128];
+} BakeJob;
 
 typedef struct {
     int active, axis, hot;
@@ -88,7 +133,17 @@ static struct {
     int market_sel;
     char market_status[256];
 
-    /* bake job */
+    /* play mode */
+    PlayMode pl;
+
+    /* baked data (loaded sidecars or fresh bake results) */
+    BakedLightmap blm;
+    BakedOcclusion boc;
+    BakedProbes bpr;
+    unsigned bake_sig;
+
+    /* background bake job */
+    BakeJob job;
     int job_running;
     char job_name[32];
     float job_p;
@@ -666,7 +721,7 @@ static void draw_editor_overlay(void) {
                     line_push(buf, &n, a, v3_add(tip, v3_mul(v3_sub(pivot, tip), 0.12f)), c);
                     line_push(buf, &n, b, v3_add(tip, v3_mul(v3_sub(pivot, tip), 0.12f)), c);
                 } else { /* scale bar */
-                    Vec3 t = L * 0.07f;
+                    float t = L * 0.07f;
                     if (i == 0) { line_push(buf, &n, v3(tip.x, tip.y - t, tip.z), v3(tip.x, tip.y + t, tip.z), c); line_push(buf, &n, v3(tip.x, tip.y, tip.z - t), v3(tip.x, tip.y, tip.z + t), c); }
                     if (i == 1) { line_push(buf, &n, v3(tip.x - t, tip.y, tip.z), v3(tip.x + t, tip.y, tip.z), c); line_push(buf, &n, v3(tip.x, tip.y, tip.z - t), v3(tip.x, tip.y, tip.z + t), c); }
                     if (i == 2) { line_push(buf, &n, v3(tip.x - t, tip.y, tip.z), v3(tip.x + t, tip.y, tip.z), c); line_push(buf, &n, v3(tip.x, tip.y - t, tip.z), v3(tip.x, tip.y + t, tip.z), c); }
@@ -715,35 +770,461 @@ static void make_floor_scene(Scene *s) {
     Entity *p = scene_add(s, "Player");
     if (p) {
         snprintf(p->name, sizeof p->name, "Player");
-        p->pos = v3(0, 1, 0); p->scale = v3(0.8f, 1.6f, 0.8f);
+        p->pos = v3(0, 0.9f, 0); p->scale = v3(1, 1.8f, 1);
         p->body = BODY_DYNAMIC; p->controller = 1;
-        snprintf(p->script, sizeof p->script, "Player");
-        p->follow_dist = 6.0f; p->follow_height = 2.0f;
         p->color = v3(0.85f, 0.3f, 0.25f);
     }
 }
 
-static void edit_update(const Input *in, float dt);
-static void play_update(const Input *in, float dt);
-static void exit_play(void);
-static void menu_refresh(void);
+/* ------------------------------------------------------- baked data / jobs */
+
+static void baked_paths(void) {
+    snprintf(G.lm_path, sizeof G.lm_path, "%s.lightmap", G.scene_path);
+    snprintf(G.oc_path, sizeof G.oc_path, "%s.pvs", G.scene_path);
+    snprintf(G.pr_path, sizeof G.pr_path, "%s.probes", G.scene_path);
+}
+
+static void baked_free(void) {
+    bake_lightmap_free(&G.blm);
+    bake_occlusion_free(&G.boc);
+    bake_probes_free(&G.bpr);
+    renderer_clear_lightmap();
+    renderer_clear_probes();
+    G.has_lm = G.lm_stale = G.has_oc = G.oc_stale = G.has_pr = G.pr_stale = 0;
+}
+
+/* Load the sidecars that sit next to the .vscene (play.py: Lightmap/Probes/OcclusionData). */
+static void baked_load(void) {
+    int stale = 0;
+    baked_free();
+    if (!G.scene_path[0]) return;
+    baked_paths();
+    G.bake_sig = bake_signature(&G.scene);
+    if (bake_load_lightmap(G.lm_path, &G.blm, G.bake_sig, &stale)) {
+        G.has_lm = 1; G.lm_stale = stale;
+        renderer_set_lightmap(G.blm.w, G.blm.h, G.blm.rgb, G.blm.minx, G.blm.minz, G.blm.sizex, G.blm.sizez);
+        VLOG("lightmap %s (%dx%d%s)", G.lm_path, G.blm.w, G.blm.h, stale ? ", stale" : "");
+    }
+    if (bake_load_occlusion(G.oc_path, &G.boc, G.bake_sig, &stale)) {
+        G.has_oc = 1; G.oc_stale = stale;
+        VLOG("occlusion %s (%dx%dx%d%s)", G.oc_path, G.boc.nx, G.boc.ny, G.boc.nz, stale ? ", stale" : "");
+    }
+    if (bake_load_probes(G.pr_path, &G.bpr, G.bake_sig, &stale)) {
+        G.has_pr = 1; G.pr_stale = stale;
+        renderer_set_probes(G.bpr.nx, G.bpr.ny, G.bpr.nz, G.bpr.rgb,
+                            G.bpr.minx, G.bpr.miny, G.bpr.minz,
+                            G.bpr.sizex / (float)(G.bpr.nx > 0 ? G.bpr.nx : 1),
+                            G.bpr.sizey / (float)(G.bpr.ny > 0 ? G.bpr.ny : 1),
+                            G.bpr.sizez / (float)(G.bpr.nz > 0 ? G.bpr.nz : 1));
+        VLOG("probes %s (%dx%dx%d%s)", G.pr_path, G.bpr.nx, G.bpr.ny, G.bpr.nz, stale ? ", stale" : "");
+    }
+}
+
+/* Play-time PVS: skip static entities the bake says are hidden from this cell. */
+static int pl_entity_visible(int i) {
+    if (i < 0 || i >= G.scene.count) return 1;
+    if (!G.has_oc || !G.boc.vis || G.oc_stale || G.scene.e[i].body != BODY_STATIC) return 1;
+    return bake_occlusion_visible(&G.boc, G.pl.eye, i);
+}
+
+static void bake_progress_cb(float frac, void *ud) {
+    BakeJob *j = (BakeJob *)ud;
+    j->progress = frac;
+}
+
+static void bake_worker(void *ud) {
+    BakeJob *j = (BakeJob *)ud;
+    int ok = 0;
+    char why[96];
+    why[0] = 0;
+    if (j->cancel) { snprintf(j->error, sizeof j->error, "cancelled"); j->done = 1; return; }
+    if (j->kind == 0)
+        ok = bake_occlusion(&j->scene, &j->tris, bake_progress_cb, j, &j->cancel, &j->oc);
+    else if (j->kind == 1)
+        ok = bake_lightmap(&j->scene, &j->tris, bake_progress_cb, j, &j->cancel, &j->lm);
+    else
+        ok = bake_probes(&j->scene, &j->tris, bake_progress_cb, j, &j->cancel, &j->pr);
+    if (!ok) {
+        if (j->cancel) snprintf(j->error, sizeof j->error, "cancelled");
+        else snprintf(j->error, sizeof j->error, "%s bake failed%s%s", BAKE_NAMES[j->kind],
+                      why[0] ? ": " : "", why);
+    }
+    j->ok = ok;
+    j->done = 1;
+}
+
+static void bake_start(int kind) {
+    BakeJob *j = &G.job;
+    if (G.job_running) { msg("a bake is already running"); return; }
+    if (!G.scene_path[0]) { msg("save the scene before baking"); return; }
+    /* assets_load_obj uploads to GL, so warm every OBJ on the main thread first;
+       the worker then only reads the CPU copy through assets_find_obj. */
+    for (int i = 0; i < G.scene.count; i++)
+        if (G.scene.e[i].active && G.scene.e[i].mesh == MESH_OBJ && G.scene.e[i].mesh_path[0])
+            assets_load_obj(G.scene.e[i].mesh_path);
+
+    memset(j, 0, sizeof *j);
+    j->kind = kind;
+    j->sig = bake_signature(&G.scene);
+    j->scene = G.scene;
+    bake_world_tris(&j->scene, &j->tris);
+    j->progress = 0.0f;
+    j->thread = vthread_start(bake_worker, j);
+    if (!j->thread) {
+        bake_free_tris(&j->tris);
+        G.job_error[0] = 0;
+        snprintf(G.job_error, sizeof G.job_error, "could not start the worker thread");
+        msg("%s", G.job_error);
+        return;
+    }
+    G.job_running = 1;
+    G.job_p = 0.0f;
+    snprintf(G.job_name, sizeof G.job_name, "%s", BAKE_NAMES[kind]);
+    snprintf(G.job_text, sizeof G.job_text, "baking %s...", BAKE_NAMES[kind]);
+    snprintf(G.job_error, sizeof G.job_error, " ");
+    msg("baking %s (background)", BAKE_NAMES[kind]);
+}
+
+static void bake_poll(void) {
+    BakeJob *j = &G.job;
+    if (!G.job_running) return;
+    G.job_p = j->progress;
+    if (!j->done) {
+        snprintf(G.job_text, sizeof G.job_text, "baking %s... %d%%", BAKE_NAMES[j->kind],
+                 (int)(j->progress * 100.0f));
+        return;
+    }
+    if (j->thread) { vthread_join(j->thread); j->thread = NULL; }
+
+    if (j->ok) {
+        baked_paths();
+        if (j->kind == 0) {
+            bake_occlusion_free(&G.boc);
+            G.boc = j->oc;
+            memset(&j->oc, 0, sizeof j->oc);
+            G.has_oc = 1; G.oc_stale = 0;
+            bake_save_occlusion(G.oc_path, &G.boc, j->sig);
+            msg("occlusion baked (%dx%dx%d) -> %s", G.boc.nx, G.boc.ny, G.boc.nz, G.oc_path);
+        } else if (j->kind == 1) {
+            bake_lightmap_free(&G.blm);
+            G.blm = j->lm;
+            memset(&j->lm, 0, sizeof j->lm);
+            G.has_lm = 1; G.lm_stale = 0;
+            renderer_set_lightmap(G.blm.w, G.blm.h, G.blm.rgb,
+                                  G.blm.minx, G.blm.minz, G.blm.sizex, G.blm.sizez);
+            bake_save_lightmap(G.lm_path, &G.blm, j->sig);
+            msg("lightmap baked (%dx%d) -> %s", G.blm.w, G.blm.h, G.lm_path);
+        } else {
+            bake_probes_free(&G.bpr);
+            G.bpr = j->pr;
+            memset(&j->pr, 0, sizeof j->pr);
+            G.has_pr = 1; G.pr_stale = 0;
+            renderer_set_probes(G.bpr.nx, G.bpr.ny, G.bpr.nz, G.bpr.rgb,
+                                G.bpr.minx, G.bpr.miny, G.bpr.minz,
+                                G.bpr.sizex / (float)(G.bpr.nx > 0 ? G.bpr.nx : 1),
+                                G.bpr.sizey / (float)(G.bpr.ny > 0 ? G.bpr.ny : 1),
+                                G.bpr.sizez / (float)(G.bpr.nz > 0 ? G.bpr.nz : 1));
+            bake_save_probes(G.pr_path, &G.bpr, j->sig);
+            msg("light probes baked (%dx%dx%d) -> %s", G.bpr.nx, G.bpr.ny, G.bpr.nz, G.pr_path);
+        }
+        G.bake_sig = j->sig;
+        G.job_error[0] = 0;
+    } else {
+        snprintf(G.job_error, sizeof G.job_error, "%s", j->error[0] ? j->error : "bake failed");
+        msg("%s", G.job_error);
+    }
+    bake_free_tris(&j->tris);
+    G.job_running = 0;
+    G.job_p = 0.0f;
+    G.job_text[0] = 0;
+}
+
+/* ------------------------------------------------------- play mode (FPS) */
+
+static Vec3 pl_forward(void) {
+    return v3(-sinf(G.pl.yaw) * cosf(G.pl.pitch), sinf(G.pl.pitch), -cosf(G.pl.yaw) * cosf(G.pl.pitch));
+}
+static Vec3 pl_half(const Entity *p) {
+    float hx = fabsf(p->scale.x) * 0.5f, hz = fabsf(p->scale.z) * 0.5f, hy = fabsf(p->scale.y) * 0.5f;
+    if (hx > 0.35f) hx = 0.35f;
+    if (hz > 0.35f) hz = 0.35f;
+    if (hy < 0.4f) hy = 0.9f;
+    return v3(hx, hy, hz);
+}
+
+static void play_msg_push(const char *text) {
+    PlayMode *pl = &G.pl;
+    if (!text || !text[0]) return;
+    for (int i = PL_MSG_MAX - 1; i > 0; i--) {
+        memcpy(pl->msg[i], pl->msg[i - 1], sizeof pl->msg[i]);
+        pl->msg_t[i] = pl->msg_t[i - 1];
+    }
+    snprintf(pl->msg[0], sizeof pl->msg[0], "%s", text);
+    pl->msg_t[0] = 3.0f;
+    if (pl->nmsg < PL_MSG_MAX) pl->nmsg++;
+}
+
+static void play_hud_set(const char *text, int right) {
+    PlayMode *pl = &G.pl;
+    int n = right ? pl->nright : pl->nleft;
+    char (*arr)[96] = right ? pl->right : pl->left;
+    int base = right ? 6 : 0;
+    if (!text || !text[0]) return;
+    for (int i = 0; i < n; i++)
+        if (!strcmp(arr[i], text)) { pl->hud_t[base + i] = pl->time; return; }
+    if (n >= 6) n = 5; /* replace the oldest line when full */
+    snprintf(arr[n], sizeof arr[n], "%s", text);
+    pl->hud_t[base + n] = pl->time;
+    if (right) { if (pl->nright < 6) pl->nright++; } else { if (pl->nleft < 6) pl->nleft++; }
+}
+
+static void play_damage(float amount) {
+    PlayMode *pl = &G.pl;
+    char buf[128];
+    if (pl->health <= 0.0f || amount <= 0.0f) return;
+    pl->health -= amount;
+    if (pl->health < 0.0f) pl->health = 0.0f;
+    snprintf(buf, sizeof buf, "-%d HP", (int)(amount + 0.5f));
+    play_hud_set(buf, 1);
+    if (pl->health <= 0.0f) {
+        pl->dead_wait = 4.0f;
+        play_msg_push("--- YOU DIED ---");
+    }
+}
+
+static void play_api_damage(float amount) { play_damage(amount); }
+static void play_api_message(const char *text) { play_msg_push(text); }
+static void play_api_hud(const char *text, int right) { play_hud_set(text, right); }
+
+static BlocksGameApi PLAY_API = { play_api_damage, play_api_message, play_api_hud };
+
+static int pl_solid(const Entity *e) { return e->active && e->body != BODY_NONE; }
+
+static int pl_blocked(Vec3 c, Vec3 half, int skip) {
+    for (int i = 0; i < G.scene.count; i++) {
+        const Entity *e = &G.scene.e[i];
+        Vec3 h;
+        if (i == skip || !pl_solid(e)) continue;
+        h = v3(fabsf(e->scale.x) * 0.5f, fabsf(e->scale.y) * 0.5f, fabsf(e->scale.z) * 0.5f);
+        if (fabsf(c.x - e->pos.x) < half.x + h.x - 1e-3f &&
+            fabsf(c.y - e->pos.y) < half.y + h.y - 1e-3f &&
+            fabsf(c.z - e->pos.z) < half.z + h.z - 1e-3f) return 1;
+    }
+    return 0;
+}
+
+/* highest solid top under the player's footprint, looking at most `probe` up */
+static float pl_ground(Vec3 c, Vec3 half, int skip, float probe) {
+    float g = -1e30f;
+    float feet = c.y - half.y;
+    for (int i = 0; i < G.scene.count; i++) {
+        const Entity *e = &G.scene.e[i];
+        Vec3 h;
+        if (i == skip || !pl_solid(e)) continue;
+        h = v3(fabsf(e->scale.x) * 0.5f, fabsf(e->scale.y) * 0.5f, fabsf(e->scale.z) * 0.5f);
+        if (fabsf(c.x - e->pos.x) >= half.x + h.x - 1e-3f) continue;
+        if (fabsf(c.z - e->pos.z) >= half.z + h.z - 1e-3f) continue;
+        {
+            float top = e->pos.y + h.y;
+            if (top <= feet + probe && top > g) g = top;
+        }
+    }
+    return g;
+}
+
+static void pl_move(Entity *p, Vec3 half, Vec3 wish, float dt) {
+    PlayMode *pl = &G.pl;
+    int n = (int)ceilf(dt * 120.0f);
+    float h;
+    if (n < 1) n = 1;
+    if (n > 8) n = 8;
+    h = dt / (float)n;
+    for (int s = 0; s < n; s++) {
+        float dx = wish.x * h, dz = wish.z * h;
+        if (dx != 0.0f) {
+            Vec3 t = p->pos;
+            t.x += dx;
+            if (!pl_blocked(t, half, pl->player)) p->pos = t;
+            else {
+                t = p->pos; t.x += dx; t.y += PL_STEP;
+                if (!pl_blocked(t, half, pl->player)) p->pos = t;
+            }
+        }
+        if (dz != 0.0f) {
+            Vec3 t = p->pos;
+            t.z += dz;
+            if (!pl_blocked(t, half, pl->player)) p->pos = t;
+            else {
+                t = p->pos; t.z += dz; t.y += PL_STEP;
+                if (!pl_blocked(t, half, pl->player)) p->pos = t;
+            }
+        }
+        /* stick to the ground when walking down stairs / while grounded */
+        if (pl->grounded) {
+            float g0 = pl_ground(p->pos, half, pl->player, PL_STEP + 0.05f);
+            float feet = p->pos.y - half.y;
+            if (g0 > -1e29f && fabsf(feet - g0) <= PL_STEP + 0.06f) {
+                p->pos.y = g0 + half.y;
+                if (pl->vel.y < 0.0f) pl->vel.y = 0.0f;
+            } else {
+                pl->grounded = 0; /* walked off a ledge */
+            }
+        }
+        pl->vel.y -= PL_GRAVITY * h;
+        {
+            float ny = p->pos.y + pl->vel.y * h;
+            float g = pl_ground(p->pos, half, pl->player, PL_STEP + 0.05f);
+            if (pl->vel.y <= 0.0f && g > -1e29f && ny - half.y <= g) {
+                if (!pl->grounded && pl->vel.y < -12.0f) play_damage((-pl->vel.y - 12.0f) * 5.0f);
+                p->pos.y = g + half.y;
+                pl->vel.y = 0.0f;
+                pl->grounded = 1;
+            } else {
+                p->pos.y = ny;
+                if (pl->vel.y > 0.05f) pl->grounded = 0;
+                else if (g <= -1e29f || p->pos.y - half.y > g + 0.06f) pl->grounded = 0;
+            }
+        }
+    }
+    p->vel = pl->vel;
+    p->rot.y = pl->yaw * 180.0f / VIPER_PI;
+}
+
+static int pl_pick(Vec3 ro, Vec3 rd, int skip, float maxd, float *dist) {
+    int best = -1;
+    float bt = maxd;
+    for (int i = 0; i < G.scene.count; i++) {
+        const Entity *e = &G.scene.e[i];
+        Vec3 lo, hi;
+        float t;
+        if (i == skip || !pl_solid(e)) continue;
+        if (!entity_boxes(e, &lo, &hi)) continue;
+        if (ray_aabb(ro, rd, lo, hi, &t) && t < bt) { bt = t; best = i; }
+    }
+    if (dist) *dist = bt;
+    return best;
+}
+
+static int play_look_target(void) {
+    Vec3 lo, hi;
+    float t, bt = 4.0f;
+    int best = -1;
+    Vec3 o = G.pl.eye, d = pl_forward();
+    for (int i = 0; i < G.scene.count; i++) {
+        const Entity *e = &G.scene.e[i];
+        if (i == G.pl.player || !e->active || e->body == BODY_NONE) continue;
+        if (e->script_id < 0) continue; /* play.py only hints scripted units */
+        if (!entity_boxes(e, &lo, &hi)) continue;
+        if (ray_aabb(o, d, lo, hi, &t) && t < bt) { bt = t; best = i; }
+    }
+    return best;
+}
+
+static void play_shoot(void) {
+    float dist = 200.0f;
+    Vec3 ro = G.pl.eye, rd = pl_forward();
+    int hit = pl_pick(ro, rd, G.pl.player, 200.0f, &dist);
+    if (hit < 0) return;
+    {
+        Entity *e = &G.scene.e[hit];
+        char buf[96];
+        if (e->body == BODY_DYNAMIC) {
+            e->vel = v3_add(e->vel, v3_mul(rd, 9.0f));
+            snprintf(buf, sizeof buf, "hit %s", e->name);
+        } else snprintf(buf, sizeof buf, "hit %s (%.0fm)", e->name, dist);
+        play_msg_push(buf);
+    }
+}
+
+static void play_respawn(void) {
+    Entity *p;
+    PlayMode *pl = &G.pl;
+    if (pl->player < 0 || pl->player >= G.scene.count) return;
+    p = &G.scene.e[pl->player];
+    p->pos = p->spawn;
+    p->vel = v3(0, 0, 0);
+    pl->vel = v3(0, 0, 0);
+    pl->health = PL_MAX_HEALTH;
+    pl->dead_wait = 0.0f;
+    pl->grounded = 0;
+    pl->yaw = DEG2RAD(p->rot.y);
+    pl->pitch = 0.0f;
+    pl->eye = v3(p->pos.x, p->pos.y - pl_half(p).y + PL_EYE, p->pos.z);
+}
 
 static void enter_play(void) {
+    int standalone = G.pl.standalone;
+    PlayMode *pl = &G.pl;
+    Entity *p;
+
     G.snapshot = G.scene;
-    for (int i = 0; i < G.scene.count; i++) { G.scene.e[i].spawn = G.scene.e[i].pos; G.scene.e[i].vel = v3(0, 0, 0); }
-    blocks_bind_scene(&G.scene);
+    memset(pl, 0, sizeof *pl);
+    pl->standalone = standalone;
+    pl->player = -1;
+    pl->fog = 1;
+    pl->health = PL_MAX_HEALTH;
+
+    for (int i = 0; i < G.scene.count; i++)
+        if (G.scene.e[i].active && G.scene.e[i].controller) { pl->player = i; break; }
+    if (pl->player < 0)
+        for (int i = 0; i < G.scene.count; i++) {
+            const char *n = G.scene.e[i].name;
+            if (G.scene.e[i].active && (!strcmp(n, "Player") || !strcmp(n, "player"))) { pl->player = i; break; }
+        }
+    if (pl->player < 0)
+        for (int i = 0; i < G.scene.count; i++)
+            if (G.scene.e[i].active && G.scene.e[i].body == BODY_DYNAMIC) { pl->player = i; break; }
+    if (pl->player < 0) {
+        Entity *e = scene_add(&G.scene, "Player");
+        if (!e) { VLOG("play: no player and no room for one"); return; }
+        e->pos = v3(0, 0.9f, 0);
+        e->scale = v3(1, 1.8f, 1);
+        e->color = v3(0.85f, 0.3f, 0.25f);
+        pl->player = G.scene.count - 1;
+    }
+    p = &G.scene.e[pl->player];
+    p->active = 1;
+    p->spawn = p->pos;
+    p->vel = v3(0, 0, 0);
+    p->input_vel = v3(0, 0, 0);
+    p->controller = 1;
+    p->body = BODY_STATIC;   /* the engine drives the player; bodies still collide with it */
+    if (p->scale.y < 1.0f) p->scale.y = 1.8f;
+
     blocks_reset_vars();
-    G.mode = MODE_PLAY; G.play_pitch = 0.25f;
+    blocks_bind_scene(&G.scene);
+    p->script_id = -1;       /* walk/turn blocks must not fight the FPS controller */
+    blocks_set_game_api(&PLAY_API);
+
+    pl->yaw = DEG2RAD(p->rot.y);
+    pl->pitch = 0.0f;
+    pl->grounded = 0;
+    pl->vel = v3(0, 0, 0);
+    pl->eye = v3(p->pos.x, p->pos.y - pl_half(p).y + PL_EYE, p->pos.z);
+    pl->on = 1;
+
+    G.mode = MODE_PLAY;
+    window_set_captured(G.win, 1);
     blocks_update_scene(&G.scene, window_input(G.win), 0.0f, BLOCKS_EV_START);
-    VLOG("PLAY");
+    VLOG("PLAY: first person, eye %.1f, health %.0f", PL_EYE, pl->health);
 }
+
 static void exit_play(void) {
+    int standalone = G.pl.standalone;
     G.scene = G.snapshot;
+    blocks_bind_scene(&G.scene);
+    blocks_set_game_api(NULL);
+    G.pl.on = 0;
     G.mode = MODE_EDIT;
     window_set_captured(G.win, 0);
     scan_assets();
     VLOG("STOP (scene restored)");
+    if (standalone) window_request_close(G.win);
 }
+
+static void edit_update(const Input *in, float dt);
+static void play_update(const Input *in, float dt);
+static void menu_refresh(void);
 
 static void edit_update(const Input *in, float dt) {
     window_set_captured(G.win, in->rmb);
@@ -845,25 +1326,85 @@ static void edit_update(const Input *in, float dt) {
 }
 
 static void play_update(const Input *in, float dt) {
+    PlayMode *pl = &G.pl;
+    Entity *p;
+    Vec3 wish = v3(0, 0, 0);
+
+    if (pl->player < 0 || pl->player >= G.scene.count) return;
+    p = &G.scene.e[pl->player];
+    pl->time += dt;
+
     window_set_captured(G.win, 1);
-    G.play_pitch = clampf(G.play_pitch + in->mouse_dy * 0.003f, -0.1f, 1.2f);
+    pl->yaw -= in->mouse_dx * 0.0025f;
+    pl->pitch = clampf(pl->pitch - in->mouse_dy * 0.0025f, -1.5f, 1.5f);
+    if (in->pressed['F']) { pl->fog = !pl->fog; play_msg_push(pl->fog ? "fog on" : "fog off"); }
+
+    if (pl->health > 0.0f) {
+        float speed = in->down[VKEY_LSHIFT] ? PL_RUN : PL_WALK;
+        float fx = -sinf(pl->yaw), fz = -cosf(pl->yaw);
+        float rx = cosf(pl->yaw), rz = -sinf(pl->yaw);
+        float mf = (float)((in->down['W'] ? 1 : 0) - (in->down['S'] ? 1 : 0));
+        float mr = (float)((in->down['D'] ? 1 : 0) - (in->down['A'] ? 1 : 0));
+        float wx = fx * mf + rx * mr, wz = fz * mf + rz * mr;
+        float l = sqrtf(wx * wx + wz * wz);
+        if (l > 1e-5f) { wx /= l; wz /= l; }
+        wish = v3(wx * speed, 0, wz * speed);
+        if (in->pressed[VKEY_SPACE] && pl->grounded) { pl->vel.y = PL_JUMP; pl->grounded = 0; }
+    } else {
+        pl->dead_wait -= dt;
+        if (pl->dead_wait <= 0.0f) { play_respawn(); play_msg_push("respawned - go get them"); }
+    }
+
+    pl_move(p, pl_half(p), wish, dt);
+    pl->eye = v3(p->pos.x, p->pos.y - pl_half(p).y + PL_EYE, p->pos.z);
+
+    /* scripts: entity behaviour (on_start ran on enter), then per-frame input */
     blocks_update_scene(&G.scene, in, dt, BLOCKS_EV_UPDATE);
     blocks_update_scene(&G.scene, in, dt, BLOCKS_EV_KEYS);
+
+    /* dynamic bodies (crates, props) */
     physics_update(&G.scene, dt);
+
+    /* interaction hint refreshed at 20 Hz, like play.py's _cross */
+    if (pl->time - pl->hint_t >= 0.05f) {
+        pl->hint_t = pl->time;
+        pl->target = play_look_target();
+    }
+    if (in->pressed['E'] && pl->target >= 0 && pl->target < G.scene.count) {
+        blocks_run_entity(&G.scene, pl->target, in, dt, BLOCKS_EV_INTERACT);
+        pl->target = play_look_target();
+    }
+    if (in->lmb_pressed && pl->health > 0.0f) play_shoot();
+
+    /* expire messages and one-shot HUD lines */
+    {
+        int w = 0;
+        for (int i = 0; i < pl->nmsg; i++) {
+            pl->msg_t[i] -= dt;
+            if (pl->msg_t[i] > 0.0f) {
+                if (w != i) { memcpy(pl->msg[w], pl->msg[i], sizeof pl->msg[w]); pl->msg_t[w] = pl->msg_t[i]; }
+                w++;
+            }
+        }
+        pl->nmsg = w;
+    }
+    for (int side = 0; side < 2; side++) {
+        char (*arr)[96] = side ? pl->right : pl->left;
+        int *n = side ? &pl->nright : &pl->nleft;
+        int base = side ? 6 : 0, w = 0;
+        for (int i = 0; i < *n; i++) {
+            if (pl->time - pl->hud_t[base + i] <= 2.5f) {
+                if (w != i) { memcpy(arr[w], arr[i], sizeof arr[w]); pl->hud_t[base + w] = pl->hud_t[base + i]; }
+                w++;
+            }
+        }
+        *n = w;
+    }
 }
 
 static Mat4 make_view(void) {
-    if (G.mode == MODE_PLAY) {
-        for (int i = 0; i < G.scene.count; i++) {
-            const Entity *e = &G.scene.e[i];
-            if (!e->active || e->follow_dist <= 0) continue;
-            float yaw = DEG2RAD(e->rot.y);
-            Vec3 fwd = v3(-sinf(yaw), 0, -cosf(yaw));
-            Vec3 eye = v3_add(e->pos, v3_add(v3_mul(fwd, -e->follow_dist * cosf(G.play_pitch)),
-                                             v3(0, e->follow_height + e->follow_dist * sinf(G.play_pitch), 0)));
-            return m4_look_at(eye, v3_add(e->pos, v3(0, 0.8f, 0)), v3(0, 1, 0));
-        }
-    }
+    if (G.mode == MODE_PLAY)
+        return m4_look_at(G.pl.eye, v3_add(G.pl.eye, pl_forward()), v3(0, 1, 0));
     return m4_look_at(G.cam_pos, v3_add(G.cam_pos, cam_forward()), v3(0, 1, 0));
 }
 
@@ -907,6 +1448,7 @@ static void open_project(const char *name) {
     }
     snprintf(G.scene_path, sizeof G.scene_path, "%s", file);
     blocks_bind_scene(&G.scene);
+    baked_load();
     G.selected = -1;
     group_clear();
     G.undo_n = G.redo_n = 0;
@@ -958,13 +1500,21 @@ static void menu_export(void) {
     snprintf(exe, sizeof exe, "%s/viper.exe", dir);
     if (G.argv0[0] && fs_copy_file(G.argv0, exe)) VLOG("packaged engine exe %s", exe);
     else statusf("warning: engine exe not packaged (rename it to viper.exe next to this build)");
+    /* the game needs its assets + bundled marketplace next to the exe */
+    {
+        char dst_assets[260], dst_market[260];
+        snprintf(dst_assets, sizeof dst_assets, "%s/assets", dir);
+        snprintf(dst_market, sizeof dst_market, "%s/market", dir);
+        if (fs_is_dir("assets")) fs_copy_tree("assets", dst_assets);
+        if (fs_is_dir("market")) fs_copy_tree("market", dst_market);
+    }
     snprintf(bat, sizeof bat, "%s/run.bat", dir);
     f = fopen(bat, "w");
     if (f) {
-        fprintf(f, "@echo off\r\nstart \"Viper - %s\" viper.exe %s.vscene\r\n", name, name);
+        fprintf(f, "@echo off\r\nstart \"Viper - %s\" viper.exe %s.vscene --play\r\n", name, name);
         fclose(f);
     }
-    statusf("compiled to %s - zip the folder to share your game", dir);
+    statusf("compiled to %s - run.bat starts the game in first person", dir);
     VLOG("exported projects/%s -> %s", name, dir);
 }
 
@@ -1116,14 +1666,18 @@ static void gui_sync_in(GuiEditor *ed) {
             msg("added %s", path);
         }
     }
-    if (ed->bake_oc_pressed || ed->bake_lm_pressed || ed->bake_pr_pressed) {
-        msg("baking arrives with the next build (see PARITY.md)");
+    if (ed->cancel_pressed && G.job_running) {
+        G.job.cancel = 1;
+        msg("cancelling %s...", G.job_name);
     }
+    if (ed->bake_oc_pressed) bake_start(0);
+    if (ed->bake_lm_pressed) bake_start(1);
+    if (ed->bake_pr_pressed) bake_start(2);
 }
 
 /* ---------------- main loop ---------------- */
 
-int engine_run(const char *scene_path, const char *argv0) {
+int engine_run(const char *scene_path, const char *argv0, int play_only) {
     memset(&G, 0, sizeof G);
     if (argv0 && argv0[0]) snprintf(G.argv0, sizeof G.argv0, "%s", argv0);
     if (scene_path && scene_path[0]) snprintf(G.scene_path, sizeof G.scene_path, "%s", scene_path);
@@ -1153,10 +1707,17 @@ int engine_run(const char *scene_path, const char *argv0) {
             make_floor_scene(&G.scene);
         }
         blocks_bind_scene(&G.scene);
+        baked_load();
         G.selected = -1;
         G.cam_pos = v3(0, 6, 14); G.cam_pitch = -0.35f;
         G.mode = MODE_EDIT;
-        VLOG("v0.4 editor ready. F1-F6 tabs | RMB+WASD fly | LMB select | TAB place/select | 1/2/3 gizmo | Ctrl+Z/Y | F5 play | M browser");
+        if (play_only) {
+            G.pl.standalone = 1;
+            enter_play();
+            VLOG("compiled game: first-person play mode (ESC quits)");
+        } else {
+            VLOG("v0.4 editor ready. F1-F6 tabs | RMB+WASD fly | LMB select | TAB place/select | 1/2/3 gizmo | Ctrl+Z/Y | F5 play | M browser");
+        }
     } else {
         G.mode = MODE_MENU;
         menu_refresh();
@@ -1176,6 +1737,7 @@ int engine_run(const char *scene_path, const char *argv0) {
             if (dt > 0.05f) dt = 0.05f;
 
             G.pre = G.scene; /* pre-frame snapshot for widget undo */
+            bake_poll();
 
             if (G.mode == MODE_MENU) {
                 if (in->pressed[VKEY_ESC]) window_request_close(G.win);
@@ -1194,17 +1756,25 @@ int engine_run(const char *scene_path, const char *argv0) {
                 } else if (in->pressed[VKEY_ESC]) {
                     if (G.mode == MODE_PLAY) exit_play(); else window_request_close(G.win);
                 }
-                if (G.mode == MODE_EDIT) edit_update(in, dt); else play_update(in, dt);
+                if (G.mode == MODE_EDIT) edit_update(in, dt);
+                else if (G.mode == MODE_PLAY) play_update(in, dt);
             }
 
             {
                 int fw, fh, ww, wh;
                 window_framebuffer_size(G.win, &fw, &fh);
                 window_size(G.win, &ww, &wh);
+                if (G.mode == MODE_PLAY) {
+                    renderer_set_camera(G.pl.eye);
+                    renderer_set_fog(G.pl.fog ? 30.0f : 1e5f, G.pl.fog ? 110.0f : 2e5f);
+                } else {
+                    renderer_set_camera(G.cam_pos);
+                    renderer_set_fog(1e5f, 2e5f);
+                }
                 if (fw > 0 && fh > 0) {
                     float dpi_x = ww > 0 ? (float)fw / (float)ww : 1.0f;
                     float dpi_y = wh > 0 ? (float)fh / (float)wh : 1.0f;
-                    Vec3 sky = G.mode == MODE_PLAY ? v3(0.45f, 0.65f, 0.9f)
+                    Vec3 sky = G.mode == MODE_PLAY ? v3(0.55f, 0.68f, 0.85f)
                              : G.mode == MODE_MENU ? v3(0.10f, 0.11f, 0.16f) : v3(0.18f, 0.2f, 0.25f);
                     if (G.mode == MODE_EDIT) {
                         int vx = (int)((float)G.vx * dpi_x), vy = (int)((float)G.vy * dpi_y);
@@ -1225,6 +1795,10 @@ int engine_run(const char *scene_path, const char *argv0) {
                             Entity *e = &G.scene.e[i];
                             int sel = (G.mode == MODE_EDIT && (i == G.selected || group_has(i)));
                             if (!e->active) continue;
+                            if (G.mode == MODE_PLAY) {
+                                if (i == G.pl.player) continue;          /* first person: no body in view */
+                                if (!pl_entity_visible(i)) continue;     /* baked PVS */
+                            }
                             if (e->mesh == MESH_OBJ && e->mesh_path[0]) {
                                 int m = assets_load_obj(e->mesh_path);
                                 if (m >= 0) { renderer_draw_obj(m, e, sel); continue; }
@@ -1245,6 +1819,24 @@ int engine_run(const char *scene_path, const char *argv0) {
                         gui_sync_out(&ed);
                         gui_editor_frame(&ed);
                         gui_sync_in(&ed);
+                    } else {
+                        GuiHud hud;
+                        PlayMode *pl = &G.pl;
+                        memset(&hud, 0, sizeof hud);
+                        snprintf(hud.fps, sizeof hud.fps, "%.0f fps  %s  render x1",
+                                 pl->fps, (G.has_oc && !G.oc_stale && G.boc.vis) ? "[static-merged +PVS]" : "[static-merged]");
+                        for (int i = 0; i < pl->nmsg && i < 5; i++)
+                            snprintf(hud.msg[i], sizeof hud.msg[i], "%s", pl->msg[pl->nmsg - 1 - i]);
+                        hud.nmsg = pl->nmsg;
+                        if (pl->target >= 0) snprintf(hud.hint, sizeof hud.hint, "[E] interact");
+                        hud.nleft = pl->nleft;
+                        hud.nright = pl->nright;
+                        for (int i = 0; i < pl->nleft; i++) snprintf(hud.left[i], sizeof hud.left[i], "%s", pl->left[i]);
+                        for (int i = 0; i < pl->nright; i++) snprintf(hud.right[i], sizeof hud.right[i], "%s", pl->right[i]);
+                        hud.health = pl->health;
+                        hud.dead = pl->dead_wait > 0.0f ? pl->dead_wait : 0.0f;
+                        hud.crosshair = 1;
+                        gui_hud_frame(&hud);
                     }
                 }
             }
@@ -1254,6 +1846,7 @@ int engine_run(const char *scene_path, const char *argv0) {
             if (now - fps_t >= 0.5) {
                 const char *sel = (G.mode == MODE_EDIT && G.selected >= 0 && G.selected < G.scene.count)
                                       ? G.scene.e[G.selected].name : "-";
+                G.pl.fps = (float)((double)frames / (now - fps_t));
                 snprintf(title, sizeof title, "Viper Engine v0.4 | %s | %s | %s | selected: %s | %.0f fps",
                          G.mode == MODE_MENU ? "BROWSER" : G.mode == MODE_EDIT ? "EDIT" : "PLAY",
                          G.mode == MODE_EDIT ? (G.tab == 0 ? "Import" : G.tab == 1 ? "Map" : G.tab == 2 ? "Bake OC" :

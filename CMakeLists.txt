@@ -38,6 +38,7 @@ set(VIPER_LOGIC_SRC
   src/scene/scene.c src/physics/physics.c src/blocks/blocks.c src/platform/input.c)
 set(VIPER_PLATFORM_SRC
   src/platform/window.c src/platform/fs.c src/gfx/glload.c src/gfx/assets.c src/gfx/renderer.c
+  src/core/thread.c src/bake/bake.c
   src/gui/gui.cpp src/engine/engine.c src/main.c)
 
 add_executable(viper ${VIPER_LOGIC_SRC} ${VIPER_PLATFORM_SRC})

@@ -7,6 +7,7 @@
 
 static int g_active;
 static ImFont *g_mono;
+static ImFont *g_hud_font;
 
 /* editor.py layout constants */
 #define TAB_H 34
@@ -534,6 +535,14 @@ extern "C" int gui_init(void *glfw_window) {
             g_mono = io.Fonts->AddFontFromFileTTF("C:/Windows/Fonts/consola.ttf", 15.0f);
         }
     }
+    g_hud_font = NULL;
+    {
+        FILE *f = fopen("C:/Windows/Fonts/segoeui.ttf", "rb");
+        if (f) {
+            fclose(f);
+            g_hud_font = io.Fonts->AddFontFromFileTTF("C:/Windows/Fonts/segoeui.ttf", 22.0f);
+        }
+    }
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     ImGui::StyleColorsDark();
     ImGuiStyle &st = ImGui::GetStyle();
@@ -629,6 +638,81 @@ extern "C" void gui_frame(GuiMenu *m) {
         ImGui::TextDisabled("ESC quits | F1-F6 editor tabs | F5 plays");
     }
     ImGui::End();
+
+    ImGui::Render();
+    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+}
+
+/* ------------------------------------------------------------- play HUD */
+
+static void hud_text(ImDrawList *dl, ImFont *font, float size, float x, float y,
+                     ImU32 col, const char *s) {
+    if (!s || !s[0]) return;
+    dl->AddText(font, size, ImVec2(x + 1.5f, y + 1.5f), IM_COL32(0, 0, 0, 220), s);
+    dl->AddText(font, size, ImVec2(x, y), col, s);
+}
+static float hud_text_w(ImFont *font, float size, const char *s) {
+    if (!s || !s[0]) return 0.0f;
+    return font->CalcTextSizeA(size, 100000.0f, 0.0f, s).x;
+}
+
+extern "C" void gui_hud_frame(const GuiHud *hud) {
+    ImGui_ImplOpenGL3_NewFrame();
+    ImGui_ImplGlfw_NewFrame();
+    ImGui::NewFrame();
+
+    ImGuiIO &io = ImGui::GetIO();
+    float W = io.DisplaySize.x, H = io.DisplaySize.y;
+    ImFont *font = g_hud_font ? g_hud_font : ImGui::GetFont();
+    const float big = g_hud_font ? 22.0f : 15.0f;
+    const float small = g_hud_font ? 17.0f : 13.0f;
+    ImDrawList *dl = ImGui::GetForegroundDrawList();
+
+    if (hud->fps[0]) hud_text(dl, font, small, 10.0f, 8.0f, IM_COL32(255, 255, 255, 235), hud->fps);
+
+    for (int i = 0; i < hud->nmsg && i < 5; i++)
+        hud_text(dl, font, big, W * 0.5f - 100.0f, 80.0f + 26.0f * i,
+                 IM_COL32(255, 240, 150, 255), hud->msg[i]);
+
+    if (hud->hint[0])
+        hud_text(dl, font, big, W * 0.5f - 40.0f, H * 0.5f + 30.0f, IM_COL32(255, 255, 255, 255), hud->hint);
+
+    if (hud->dead > 0.0f) {
+        char t[96];
+        snprintf(t, sizeof t, "--- YOU DIED ---  respawn in %.1fs", hud->dead);
+        hud_text(dl, font, big, W * 0.5f - hud_text_w(font, big, t) * 0.5f, H * 0.42f,
+                 IM_COL32(255, 80, 70, 255), t);
+    }
+
+    for (int i = 0; i < hud->nleft && i < 6; i++)
+        hud_text(dl, font, big, 14.0f, H - 70.0f - 30.0f * (float)(hud->nleft - 1 - i),
+                 IM_COL32(255, 185, 45, 255), hud->left[i]);
+    for (int i = 0; i < hud->nright && i < 6; i++) {
+        const char *s = hud->right[i];
+        hud_text(dl, font, big, W - 16.0f - hud_text_w(font, big, s),
+                 H - 70.0f - 30.0f * (float)(hud->nright - 1 - i), IM_COL32(255, 255, 255, 255), s);
+    }
+
+    /* health bar, bottom centre-left (kept small so it reads like a HUD, not a menu) */
+    {
+        float bw = 200.0f, bh = 12.0f, bx = 14.0f, by = H - 30.0f;
+        float f = hud->health < 0.0f ? 0.0f : (hud->health > 100.0f ? 1.0f : hud->health / 100.0f);
+        dl->AddRectFilled(ImVec2(bx, by), ImVec2(bx + bw, by + bh), IM_COL32(0, 0, 0, 170), 2.0f);
+        ImU32 col = f > 0.5f ? IM_COL32(90, 200, 110, 230)
+                  : (f > 0.25f ? IM_COL32(230, 190, 70, 230) : IM_COL32(220, 70, 60, 235));
+        dl->AddRectFilled(ImVec2(bx, by), ImVec2(bx + bw * f, by + bh), col, 2.0f);
+        char hp[48];
+        snprintf(hp, sizeof hp, "HP %d", (int)(hud->health + 0.5f));
+        hud_text(dl, font, small, bx + bw + 10.0f, by - 3.0f, IM_COL32(235, 235, 235, 235), hp);
+    }
+
+    if (hud->crosshair) {
+        float cx = W * 0.5f, cy = H * 0.5f;
+        dl->AddLine(ImVec2(cx - 6, cy), ImVec2(cx - 2, cy), IM_COL32(255, 255, 255, 230), 1.5f);
+        dl->AddLine(ImVec2(cx + 2, cy), ImVec2(cx + 6, cy), IM_COL32(255, 255, 255, 230), 1.5f);
+        dl->AddLine(ImVec2(cx, cy - 6), ImVec2(cx, cy - 2), IM_COL32(255, 255, 255, 230), 1.5f);
+        dl->AddLine(ImVec2(cx, cy + 2), ImVec2(cx, cy + 6), IM_COL32(255, 255, 255, 230), 1.5f);
+    }
 
     ImGui::Render();
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
