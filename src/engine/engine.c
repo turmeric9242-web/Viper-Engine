@@ -2,15 +2,18 @@
 #include "core/log.h"
 #include "core/vmath.h"
 #include "platform/window.h"
+#include "platform/fs.h"
+#include "gui/gui.h"
 #include "gfx/renderer.h"
 #include "scene/scene.h"
 #include "physics/physics.h"
 #include "blocks/blocks.h"
 #include <stdio.h>
+#include <stdarg.h>
 #include <string.h>
 #include <math.h>
 
-typedef enum { MODE_EDIT, MODE_PLAY } Mode;
+typedef enum { MODE_MENU, MODE_EDIT, MODE_PLAY } Mode;
 
 static struct {
     Window *win;
@@ -19,12 +22,21 @@ static struct {
     int selected;
     Vec3 cam_pos; float cam_yaw, cam_pitch, play_pitch;
     char scene_path[256];
+    char argv0[480];
+    GuiMenu menu; /* state owned by C; touched by gui_frame each menu frame */
 } G;
 
 static Vec3 cam_forward(void) {
     return v3(-sinf(G.cam_yaw) * cosf(G.cam_pitch), sinf(G.cam_pitch), -cosf(G.cam_yaw) * cosf(G.cam_pitch));
 }
 static float clampf(float v, float lo, float hi) { return v < lo ? lo : (v > hi ? hi : v); }
+
+static void statusf(const char *fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(G.menu.status, sizeof G.menu.status, fmt, ap);
+    va_end(ap);
+}
 
 static void select_next(void) {
     for (int k = 1; k <= G.scene.count; k++) {
@@ -46,6 +58,30 @@ static void add_primitive(MeshType m) {
     G.selected = (int)(e - G.scene.e);
 }
 
+static void make_floor_scene(Scene *s) {
+    scene_clear(s);
+    snprintf(s->name, sizeof s->name, "start");
+    Entity *f = scene_add(s, "Floor");
+    if (f) {
+        f->pos = v3(0, -0.5f, 0); f->scale = v3(40, 1, 40); f->checker = 1; f->body = BODY_STATIC;
+        f->color = v3(0.35f, 0.55f, 0.4f);
+    }
+    Entity *p = scene_add(s, "Player");
+    if (p) {
+        snprintf(p->name, sizeof p->name, "Player");
+        p->pos = v3(0, 1, 0); p->scale = v3(0.8f, 1.6f, 0.8f);
+        p->body = BODY_DYNAMIC; p->controller = 1;
+        snprintf(p->script, sizeof p->script, "Player");
+        p->follow_dist = 6.0f; p->follow_height = 2.0f;
+        p->color = v3(0.85f, 0.3f, 0.25f);
+    }
+}
+
+static void edit_update(const Input *in, float dt);
+static void play_update(const Input *in, float dt);
+static void exit_play(void);
+static void menu_refresh(void);
+
 static void enter_play(void) {
     G.snapshot = G.scene;
     for (int i = 0; i < G.scene.count; i++) { G.scene.e[i].spawn = G.scene.e[i].pos; G.scene.e[i].vel = v3(0, 0, 0); }
@@ -64,6 +100,7 @@ static void exit_play(void) {
 
 static void edit_update(const Input *in, float dt) {
     window_set_captured(G.win, in->rmb);
+    if (in->pressed['M']) { G.mode = MODE_MENU; menu_refresh(); window_set_captured(G.win, 0); return; }
     if (in->rmb) {
         G.cam_yaw -= in->mouse_dx * 0.003f;
         G.cam_pitch = clampf(G.cam_pitch - in->mouse_dy * 0.003f, -1.5f, 1.5f);
@@ -120,54 +157,165 @@ static Mat4 make_view(void) {
     return m4_look_at(G.cam_pos, v3_add(G.cam_pos, cam_forward()), v3(0, 1, 0));
 }
 
-int engine_run(const char *scene_path) {
+/* ---------------- project browser ---------------- */
+
+static void menu_refresh(void) {
+    fs_mkdir("projects");
+    G.menu.nprojects = fs_list_dirs("projects", G.menu.projects, VIP_MENU_MAX);
+    if (!G.menu.status[0])
+        snprintf(G.menu.status, sizeof G.menu.status, "%d project(s) under projects/ - open one, or make a new one",
+                 G.menu.nprojects);
+}
+
+static void open_project(const char *name) {
+    char file[200];
+    snprintf(file, sizeof file, "projects/%s/%s.vscene", name, name);
+    if (!scene_load(&G.scene, file)) {
+        statusf("could not open projects/%s", name);
+        VLOG("could not open %s", file);
+        return;
+    }
+    snprintf(G.scene_path, sizeof G.scene_path, "%s", file);
+    blocks_bind_scene(&G.scene);
+    G.selected = -1;
+    G.cam_pos = v3(0, 6, 14); G.cam_pitch = -0.35f;
+    G.mode = MODE_EDIT;
+    statusf("opened projects/%s", name);
+    VLOG("opened %s", file);
+}
+
+static void menu_open(void) {
+    if (!G.menu.projsel[0]) { statusf("click a project in the list first"); return; }
+    open_project(G.menu.projsel);
+}
+
+static void menu_new(void) {
+    const char *name = G.menu.newname;
+    char dir[96], sub[128], file[200];
+    if (!name[0]) { statusf("type a project name first"); return; }
+    snprintf(dir, sizeof dir, "projects/%s", name);
+    if (fs_is_dir(dir)) { statusf("%s already exists - pick another name", dir); return; }
+    fs_mkdir("projects");
+    if (!fs_mkdir(dir)) { statusf("could not create %s", dir); return; }
+    make_floor_scene(&G.scene);
+    snprintf(file, sizeof file, "%s/%s.vscene", dir, name);
+    if (!scene_save(&G.scene, file)) { statusf("could not create %s", file); return; }
+    if (fs_is_dir("scripts")) { /* give new projects copies of the starter blocks */
+        snprintf(sub, sizeof sub, "%s/scripts", dir);
+        fs_copy_tree("scripts", sub);
+    }
+    VLOG("created %s", file);
+    menu_refresh();
+    open_project(name);
+}
+
+static void menu_export(void) {
+    const char *name = G.menu.projsel;
+    char dir[160], exe[260], bat[300], srcfile[200];
+    FILE *f;
+    if (!name[0]) { statusf("select a project to compile first"); return; }
+    snprintf(dir, sizeof dir, "exports/%s", name);
+    snprintf(srcfile, sizeof srcfile, "projects/%s", name);
+    fs_mkdir("exports");
+    if (!fs_is_dir(srcfile) || !fs_copy_tree(srcfile, dir)) { statusf("could not copy projects/%s", name); return; }
+    snprintf(exe, sizeof exe, "%s/viper.exe", dir);
+    if (G.argv0[0] && fs_copy_file(G.argv0, exe)) VLOG("packaged engine exe %s", exe);
+    else statusf("warning: engine exe not packaged (rename it to viper.exe next to this build)");
+    snprintf(bat, sizeof bat, "%s/run.bat", dir);
+    f = fopen(bat, "w");
+    if (f) {
+        fprintf(f, "@echo off\r\nstart \"Viper - %s\" viper.exe %s.vscene\r\n", name, name);
+        fclose(f);
+    }
+    statusf("compiled to %s - zip the folder to share your game", dir);
+    VLOG("exported projects/%s -> %s", name, dir);
+}
+
+/* ---------------- main loop ---------------- */
+
+int engine_run(const char *scene_path, const char *argv0) {
     memset(&G, 0, sizeof G);
-    snprintf(G.scene_path, sizeof G.scene_path, "%s", scene_path);
+    if (argv0 && argv0[0]) snprintf(G.argv0, sizeof G.argv0, "%s", argv0);
+    if (scene_path && scene_path[0]) snprintf(G.scene_path, sizeof G.scene_path, "%s", scene_path);
     G.win = window_create(1280, 720, "Viper Engine");
     if (!G.win) return 1;
     if (!renderer_init()) { VLOG("renderer failed to initialise"); window_destroy(G.win); return 1; }
-    if (!scene_load(&G.scene, G.scene_path)) {
-        VLOG("could not read %s - starting with an empty floor", G.scene_path);
-        scene_clear(&G.scene);
-        Entity *f = scene_add(&G.scene, "Floor");
-        f->pos = v3(0, -0.5f, 0); f->scale = v3(40, 1, 40); f->checker = 1; f->body = BODY_STATIC;
-        f->color = v3(0.35f, 0.55f, 0.4f);
-    }
-    blocks_bind_scene(&G.scene);
-    G.cam_pos = v3(0, 6, 14); G.cam_pitch = -0.35f;
-    VLOG("Viper Engine v0.1 ready. EDIT: hold RMB + WASD/QE to fly | TAB select | arrows/PgUp/PgDn move | R rotate | 1/2 add | F2 save | F5 play");
-
-    double last = window_time(), fps_t = last; int frames = 0; char title[256] = "Viper Engine";
-    while (!window_should_close(G.win)) {
-        window_poll(G.win);
-        const Input *in = window_input(G.win);
-        double now = window_time();
-        float dt = (float)(now - last); last = now;
-        if (dt > 0.05f) dt = 0.05f;
-
-        if (in->pressed[VKEY_F5]) { if (G.mode == MODE_EDIT) enter_play(); else exit_play(); }
-        else if (in->pressed[VKEY_ESC]) { if (G.mode == MODE_PLAY) exit_play(); else window_request_close(G.win); }
-        if (G.mode == MODE_EDIT) edit_update(in, dt); else play_update(in, dt);
-
-        int w, h; window_framebuffer_size(G.win, &w, &h);
-        if (w > 0 && h > 0) {
-            renderer_begin(w, h, G.mode == MODE_PLAY ? v3(0.45f, 0.65f, 0.9f) : v3(0.18f, 0.2f, 0.25f));
-            Mat4 proj = m4_perspective(DEG2RAD(60.0f), (float)w / (float)h, 0.1f, 500.0f);
-            renderer_set_view_proj(m4_mul(proj, make_view()));
-            for (int i = 0; i < G.scene.count; i++)
-                if (G.scene.e[i].active) renderer_draw_entity(&G.scene.e[i], G.mode == MODE_EDIT && i == G.selected);
+    if (G.scene_path[0]) {
+        if (!scene_load(&G.scene, G.scene_path)) {
+            VLOG("could not read %s - starting with a fresh floor", G.scene_path);
+            make_floor_scene(&G.scene);
         }
-        window_swap(G.win);
+        blocks_bind_scene(&G.scene);
+        G.selected = -1;
+        G.cam_pos = v3(0, 6, 14); G.cam_pitch = -0.35f;
+        G.mode = MODE_EDIT;
+        VLOG("v0.2 ready. EDIT: hold RMB + WASD/QE to fly | TAB select | arrows/PgUp/PgDn move | R rotate | 1/2 add | M browser | F2 save | F5 play");
+    } else {
+        G.mode = MODE_MENU;
+        menu_refresh();
+        if (!gui_init(window_glfw(G.win))) {
+            VLOG("GUI failed to initialise");
+            window_destroy(G.win);
+            return 1;
+        }
+        VLOG("project browser ready. pick or create a project");
+    }
 
-        frames++;
-        if (now - fps_t >= 0.5) {
-            const char *sel = (G.mode == MODE_EDIT && G.selected < G.scene.count) ? G.scene.e[G.selected].name : "-";
-            snprintf(title, sizeof title, "Viper Engine v0.1 | %s | %s | selected: %s | %.0f fps",
-                     G.mode == MODE_EDIT ? "EDIT" : "PLAY", G.scene.name, sel, frames / (now - fps_t));
-            window_set_title(G.win, title);
-            fps_t = now; frames = 0;
+    {
+        double last = window_time(), fps_t = last;
+        int frames = 0;
+        char title[256] = "Viper Engine";
+        while (!window_should_close(G.win)) {
+            window_poll(G.win);
+            const Input *in = window_input(G.win);
+            double now = window_time();
+            float dt = (float)(now - last); last = now;
+            if (dt > 0.05f) dt = 0.05f;
+
+            if (G.mode == MODE_MENU) {
+                if (in->pressed[VKEY_ESC]) window_request_close(G.win);
+                gui_frame(&G.menu);
+                if (G.menu.new_pressed) { G.menu.new_pressed = 0; menu_new(); }
+                if (G.menu.open_pressed) { G.menu.open_pressed = 0; menu_open(); }
+                if (G.menu.export_pressed) { G.menu.export_pressed = 0; menu_export(); }
+                if (G.menu.refresh_pressed) { G.menu.refresh_pressed = 0; menu_refresh(); }
+            } else {
+                if (in->pressed[VKEY_F5]) { if (G.mode == MODE_EDIT) enter_play(); else exit_play(); }
+                else if (in->pressed[VKEY_ESC]) { if (G.mode == MODE_PLAY) exit_play(); else window_request_close(G.win); }
+                if (G.mode == MODE_EDIT) edit_update(in, dt); else play_update(in, dt);
+            }
+
+            {
+                int w, h;
+                window_framebuffer_size(G.win, &w, &h);
+                if (w > 0 && h > 0) {
+                    renderer_begin(w, h,
+                                   G.mode == MODE_PLAY ? v3(0.45f, 0.65f, 0.9f) :
+                                   G.mode == MODE_MENU ? v3(0.10f, 0.11f, 0.16f) : v3(0.18f, 0.2f, 0.25f));
+                    if (G.mode != MODE_MENU) {
+                        Mat4 proj = m4_perspective(DEG2RAD(60.0f), (float)w / (float)h, 0.1f, 500.0f);
+                        renderer_set_view_proj(m4_mul(proj, make_view()));
+                        for (int i = 0; i < G.scene.count; i++)
+                            if (G.scene.e[i].active)
+                                renderer_draw_entity(&G.scene.e[i], G.mode == MODE_EDIT && i == G.selected);
+                    }
+                }
+            }
+            window_swap(G.win);
+
+            frames++;
+            if (now - fps_t >= 0.5) {
+                const char *sel = (G.mode == MODE_EDIT && G.selected >= 0 && G.selected < G.scene.count)
+                                      ? G.scene.e[G.selected].name : "-";
+                snprintf(title, sizeof title, "Viper Engine v0.2 | %s | %s | selected: %s | %.0f fps",
+                         G.mode == MODE_MENU ? "BROWSER" : G.mode == MODE_EDIT ? "EDIT" : "PLAY",
+                         G.scene.name, sel, frames / (now - fps_t));
+                window_set_title(G.win, title);
+                fps_t = now; frames = 0;
+            }
         }
     }
+    if (G.mode == MODE_MENU) gui_shutdown();
     window_destroy(G.win);
     return 0;
 }

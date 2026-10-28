@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(ViperEngine C)
+project(ViperEngine C CXX)
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 if(MSVC)
@@ -10,7 +10,7 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 endif()
 option(VIPER_BUILD_TESTS "Build the headless logic tests" ON)
 
-# GLFW is downloaded and built automatically (static, so viper.exe is a single file).
+# GLFW + Dear ImGui are downloaded and built automatically (static, so viper.exe is a single file).
 include(FetchContent)
 set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
 set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
@@ -18,16 +18,28 @@ set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(GLFW_INSTALL OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(glfw GIT_REPOSITORY https://github.com/glfw/glfw.git GIT_TAG 3.4 GIT_SHALLOW TRUE)
 FetchContent_MakeAvailable(glfw)
+FetchContent_Declare(imgui GIT_REPOSITORY https://github.com/ocornut/imgui.git GIT_TAG v1.89.9 GIT_SHALLOW TRUE)
+FetchContent_MakeAvailable(imgui)
+add_library(imgui STATIC
+  ${imgui_SOURCE_DIR}/imgui.cpp
+  ${imgui_SOURCE_DIR}/imgui_draw.cpp
+  ${imgui_SOURCE_DIR}/imgui_tables.cpp
+  ${imgui_SOURCE_DIR}/imgui_widgets.cpp
+  ${imgui_SOURCE_DIR}/backends/imgui_impl_glfw.cpp
+  ${imgui_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp)
+target_include_directories(imgui PUBLIC ${imgui_SOURCE_DIR} ${imgui_SOURCE_DIR}/backends)
+target_link_libraries(imgui PUBLIC glfw)
 
 # Engine modules. Each folder under src/ is one module; core logic has no GLFW/GL dependency.
 set(VIPER_LOGIC_SRC
   src/scene/scene.c src/physics/physics.c src/blocks/blocks.c src/platform/input.c)
 set(VIPER_PLATFORM_SRC
-  src/platform/window.c src/gfx/glload.c src/gfx/renderer.c src/engine/engine.c src/main.c)
+  src/platform/window.c src/platform/fs.c src/gfx/glload.c src/gfx/renderer.c
+  src/gui/gui.cpp src/engine/engine.c src/main.c)
 
 add_executable(viper ${VIPER_LOGIC_SRC} ${VIPER_PLATFORM_SRC})
 target_include_directories(viper PRIVATE src)
-target_link_libraries(viper PRIVATE glfw)
+target_link_libraries(viper PRIVATE glfw imgui)
 if(WIN32)
   target_link_libraries(viper PRIVATE opengl32)
   if(MINGW)

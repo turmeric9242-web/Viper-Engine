@@ -4,13 +4,20 @@
 floor, drive the player with Viper Blocks, press Play.
 
 ## Get the .exe
-**A) GitHub (no installs):** push this folder to a GitHub repo -> Actions tab -> `build-windows` -> download the
-`ViperEngine-v0.1-windows` artifact. It runs the logic tests first, then packages `viper.exe` + `scenes/` + `scripts/`.
+**A) GitHub Releases (easiest):** open the repo's **Releases** page and download `ViperEngine-<version>.zip` -
+it contains `viper.exe` + `scenes/` + `scripts/`, ready to run. The `release` workflow publishes one when you
+push a `v...` tag (or run it manually from the Actions tab).
 
-**B) Locally:** install CMake and Visual Studio Build Tools (or MinGW-w64), then run `build_windows.bat`.
-CMake downloads and builds GLFW itself; `viper.exe` is statically linked (single file, no DLLs).
+**B) Dev builds:** Actions tab -> `build-windows` -> download the artifact (latest pushed commit; tests run
+locally only now).
 
-Run `viper.exe` from the folder that contains `scenes/` and `scripts/`. Optional: `viper.exe path\to\other.vscene`.
+**C) Locally:** install CMake and Visual Studio Build Tools (or MinGW-w64), then run `build_windows.bat`.
+CMake downloads and builds GLFW + Dear ImGui itself; `viper.exe` is statically linked (single file, no DLLs).
+
+Run `viper.exe` with no arguments for the project browser GUI: make a project (starter floor + player scene),
+open an existing one under `projects/`, or press **Compile project** to export a standalone game folder into
+`exports/<name>/` (engine exe + scenes + scripts + `run.bat`). The old way still works:
+`viper.exe path\to\scene.vscene` opens straight in the editor.
 
 ## Controls
 **Edit mode:** hold RMB + WASD/QE fly (Shift = fast) | TAB select | arrows move X/Z, PgUp/PgDn move Y (0.5 steps) |
@@ -42,6 +49,7 @@ Attach with `script Player` in a `.vscene` entity. `controller 1` + `body dynami
 | platform | window + input (GLFW lives ONLY here) | - |
 | gfx | GL loader, shaders, meshes | scene |
 | engine | editor/play loop wiring it all | everything |
+| gui | Dear ImGui wrapper + project browser (new/open/compile) | platform |
 
 `tests/test_core.c` is a headless test of scene + blocks + physics (no GPU needed): `viper_test`.
 
@@ -53,3 +61,10 @@ download of GLFW, and the Windows build - I had no GPU, Windows toolchain, or ne
 Not in v0.1 (next milestones): GUI panels (hierarchy/inspector/block editor - currently keyboard + text files),
 PBR/shadows/glTF, sphere/capsule/mesh colliders + raycasts, rotation-aware physics, audio, animation, UI, templates,
 export tooling.
+
+## v0.2 (work in progress)
+- Project browser GUI (Dear ImGui, checked in at startup or with `M` from the editor): New project (starter
+  floor + player scene), Open project, and Compile project -> a runnable standalone copy under `exports/`.
+- Parity target (the Python prototype, `AGENTS.md` there is the spec): still missing OBJ/MTL + texture loading,
+  baked lightmaps, baked occlusion culling (3D PVS), lightprobe grids, transform gizmo + multi-select,
+  marketplace, inline Viper-Blocks code editor, GPU/threads performance work.

@@ -62,6 +62,7 @@ void window_swap(Window *w) { glfwSwapBuffers(w->h); }
 void window_framebuffer_size(Window *w, int *fw, int *fh) { glfwGetFramebufferSize(w->h, fw, fh); }
 void window_set_title(Window *w, const char *t) { glfwSetWindowTitle(w->h, t); }
 double window_time(void) { return glfwGetTime(); }
+void *window_glfw(Window *w) { return w->h; }
 
 void window_set_captured(Window *w, int on) {
     if (on == w->captured) return;

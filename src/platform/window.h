@@ -12,5 +12,6 @@ void window_swap(Window *w);
 void window_framebuffer_size(Window *w, int *fw, int *fh);
 void window_set_title(Window *w, const char *title);
 void window_set_captured(Window *w, int captured); /* hide + lock the cursor for mouse-look */
+void *window_glfw(Window *w);   /* the raw GLFWwindow* (gui module) */
 double window_time(void);
 #endif
