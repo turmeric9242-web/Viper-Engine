@@ -1,0 +1,45 @@
+name: release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release tag (e.g. v0.1)'
+        required: false
+        default: 'v0.1'
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -S . -B build -A x64
+
+      - name: Build
+        run: cmake --build build --config Release
+
+      - name: Package
+        run: |
+          mkdir dist
+          copy build\Release\viper.exe dist\
+          xcopy /E /I /Y scenes dist\scenes
+          xcopy /E /I /Y scripts dist\scripts
+
+      - name: Zip
+        run: Compress-Archive -Path dist\* -DestinationPath "ViperEngine-${{ inputs.version || github.ref_name }}.zip"
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.version || github.ref_name }}
+          name: Viper Engine ${{ inputs.version || github.ref_name }}
+          files: ViperEngine-${{ inputs.version || github.ref_name }}.zip
+          generate_release_notes: true
