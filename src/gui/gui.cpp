@@ -33,32 +33,79 @@ extern "C" void gui_frame(GuiMenu *m) {
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
 
-    ImGui::SetNextWindowPos(ImVec2(40, 40), ImGuiCond_Appearing);
-    ImGui::SetNextWindowSize(ImVec2(1200, 620), ImGuiCond_Appearing);
-    if (ImGui::Begin("Viper Engine project browser", nullptr, ImGuiWindowFlags_None)) {
-        ImGui::Text("Projects under projects/: %d", m->nprojects);
+    ImGui::SetNextWindowPos(ImVec2(0, 0), ImGuiCond_Appearing);
+    ImGui::SetNextWindowSize(ImVec2(1280, 720), ImGuiCond_Appearing);
+    ImGui::SetNextWindowBgAlpha(1.0f);
+    if (ImGui::Begin("mainmenu", nullptr,
+                     ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
+                     ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse)) {
+
+        ImGui::Spacing();
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.85f, 0.2f, 1.0f));
+        ImGui::Text("VIPER ENGINE");
+        ImGui::PopStyleColor();
+        ImGui::TextDisabled("project browser - pick a project, or create a new one");
+        ImGui::Separator();
+
+        /* where everything lives */
+        ImGui::Text("Projects folder:");
+        ImGui::SameLine();
+        ImGui::TextWrapped("%s", m->root[0] ? m->root : "projects/");
+        ImGui::SameLine();
+        if (ImGui::Button("Open folder")) m->open_folder_pressed = 1;
         ImGui::SameLine();
         if (ImGui::Button("Refresh")) m->refresh_pressed = 1;
+        ImGui::Spacing();
 
-        ImGui::BeginChild("projectlist", ImVec2(0, 300), true);
+        /* project list with details */
+        ImGui::BeginChild("projectlist", ImVec2(0, 320), true);
+        if (m->nprojects == 0)
+            ImGui::TextDisabled("no projects yet - type a name below and press Create");
         for (int i = 0; i < m->nprojects; i++) {
             bool sel = strcmp(m->projsel, m->projects[i]) == 0;
-            if (ImGui::Selectable(m->projects[i], sel))
+            char label[96];
+            if (m->counts[i] >= 0)
+                snprintf(label, sizeof label, "%s  (%d entities)##%d", m->projects[i], m->counts[i], i);
+            else
+                snprintf(label, sizeof label, "%s  (no scene)##%d", m->projects[i], i);
+            if (ImGui::Selectable(label, sel))
                 snprintf(m->projsel, sizeof m->projsel, "%s", m->projects[i]);
+            if (sel) {
+                char full[400];
+                snprintf(full, sizeof full, "%s/%s/%s.vscene",
+                         m->root[0] ? m->root : "projects", m->projects[i], m->projects[i]);
+                ImGui::TextDisabled("%s", full);
+            }
         }
         ImGui::EndChild();
+        ImGui::Spacing();
 
+        /* create new project */
+        ImGui::Separator();
+        ImGui::Text("Create new project");
+        ImGui::SetNextItemWidth(320);
         ImGui::InputTextWithHint("##newname", "MyGame", m->newname, sizeof m->newname);
         ImGui::SameLine();
-        if (ImGui::Button("New project")) m->new_pressed = 1;
+        if (ImGui::Button("Create project")) m->new_pressed = 1;
+        ImGui::TextDisabled("creates %s/<name>/<name>.vscene with a starter floor + player",
+                            m->root[0] ? m->root : "projects");
+        ImGui::Spacing();
 
+        /* selected project actions */
+        ImGui::Separator();
+        ImGui::Text("Selected project");
         bool have = m->projsel[0] != 0;
-        if (ImGui::Button("Open project") && have) m->open_pressed = 1;
-        ImGui::SameLine();
-        if (ImGui::Button("Compile project (standalone .exe)") && have) m->export_pressed = 1;
         if (!have) ImGui::TextDisabled("select a project above first");
+        else {
+            ImGui::Text("Project: %s", m->projsel);
+            if (ImGui::Button("Open in editor")) m->open_pressed = 1;
+            ImGui::SameLine();
+            if (ImGui::Button("Compile to standalone .exe")) m->export_pressed = 1;
+        }
+        ImGui::Spacing();
 
-        ImGui::TextWrapped("%s", m->status[0] ? m->status : "pick a project, or type a name and press New project");
+        ImGui::Separator();
+        if (m->status[0]) ImGui::TextWrapped("%s", m->status);
         ImGui::TextDisabled("ESC quits | in the editor: M returns here, F5 plays, F2 saves");
     }
     ImGui::End();

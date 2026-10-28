@@ -1,14 +1,18 @@
 #include "platform/fs.h"
 #include "core/log.h"
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #ifdef _WIN32
 #include <windows.h>
+#include <shellapi.h>
 #include <direct.h>
+#pragma comment(lib, "shell32.lib")
 #else
 #include <sys/types.h>
 #include <dirent.h>
+#include <unistd.h>
 #endif
 
 int fs_is_dir(const char *path) {
@@ -130,4 +134,24 @@ int fs_list_dirs(const char *parent, char names[][64], int max) {
     }
 #endif
     return n;
+}
+
+int fs_getcwd(char *buf, int n) {
+    if (!buf || n <= 0) return 0;
+#ifdef _WIN32
+    return _getcwd(buf, n) != NULL;
+#else
+    return getcwd(buf, (size_t)n) != NULL;
+#endif
+}
+
+int fs_open_path(const char *path) {
+    if (!path || !path[0]) return 0;
+#ifdef _WIN32
+    return (int)(size_t)ShellExecuteA(NULL, "open", path, NULL, NULL, SW_SHOWNORMAL) > 32;
+#else
+    char cmd[600];
+    snprintf(cmd, sizeof cmd, "xdg-open '%s' >/dev/null 2>&1 &", path);
+    return system(cmd) == 0;
+#endif
 }

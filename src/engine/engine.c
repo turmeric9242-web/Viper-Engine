@@ -163,8 +163,28 @@ static Mat4 make_view(void) {
 static void menu_refresh(void) {
     fs_mkdir("projects");
     G.menu.nprojects = fs_list_dirs("projects", G.menu.projects, VIP_MENU_MAX);
+    fs_getcwd(G.menu.root, sizeof G.menu.root);
+    {
+        size_t n = strlen(G.menu.root);
+        if (n + 10 < sizeof G.menu.root) snprintf(G.menu.root + n, sizeof G.menu.root - n, "/projects");
+    }
+    for (int i = 0; i < G.menu.nprojects; i++) { /* count entities per project scene */
+        char file[400];
+        FILE *f;
+        snprintf(file, sizeof file, "projects/%s/%s.vscene", G.menu.projects[i], G.menu.projects[i]);
+        f = fopen(file, "r");
+        G.menu.counts[i] = -1;
+        if (f) {
+            char line[256];
+            int c = 0;
+            while (fgets(line, sizeof line, f))
+                if (!strncmp(line, "entity ", 7)) c++;
+            fclose(f);
+            G.menu.counts[i] = c;
+        }
+    }
     if (!G.menu.status[0])
-        snprintf(G.menu.status, sizeof G.menu.status, "%d project(s) under projects/ - open one, or make a new one",
+        snprintf(G.menu.status, sizeof G.menu.status, "%d project(s) found - open one, or create a new one",
                  G.menu.nprojects);
 }
 
@@ -280,6 +300,11 @@ int engine_run(const char *scene_path, const char *argv0) {
                 if (G.menu.open_pressed) { G.menu.open_pressed = 0; menu_open(); }
                 if (G.menu.export_pressed) { G.menu.export_pressed = 0; menu_export(); }
                 if (G.menu.refresh_pressed) { G.menu.refresh_pressed = 0; menu_refresh(); }
+                if (G.menu.open_folder_pressed) {
+                    G.menu.open_folder_pressed = 0;
+                    if (!fs_open_path(G.menu.root[0] ? G.menu.root : "projects"))
+                        statusf("could not open the projects folder");
+                }
             } else {
                 if (in->pressed[VKEY_F5]) { if (G.mode == MODE_EDIT) enter_play(); else exit_play(); }
                 else if (in->pressed[VKEY_ESC]) { if (G.mode == MODE_PLAY) exit_play(); else window_request_close(G.win); }
@@ -296,13 +321,32 @@ int engine_run(const char *scene_path, const char *argv0) {
                     if (G.mode != MODE_MENU) {
                         Mat4 proj = m4_perspective(DEG2RAD(60.0f), (float)w / (float)h, 0.1f, 500.0f);
                         renderer_set_view_proj(m4_mul(proj, make_view()));
+                        renderer_batch_reset();
                         for (int i = 0; i < G.scene.count; i++) {
-                            if (!G.scene.e[i].active) continue;
-                            if (G.scene.e[i].mesh == MESH_OBJ && G.scene.e[i].mesh_path[0]) {
-                                int m = assets_load_obj(G.scene.e[i].mesh_path);
-                                if (m >= 0) { renderer_draw_obj(m, &G.scene.e[i], G.mode == MODE_EDIT && i == G.selected); continue; }
+                            Entity *e = &G.scene.e[i];
+                            int sel = (G.mode == MODE_EDIT && i == G.selected);
+                            if (!e->active || sel) continue;
+                            if (e->mesh == MESH_OBJ && e->mesh_path[0]) {
+                                int m = assets_load_obj(e->mesh_path);
+                                if (m >= 0) { renderer_draw_obj(m, e, 0); continue; }
                             }
-                            renderer_draw_entity(&G.scene.e[i], G.mode == MODE_EDIT && i == G.selected);
+                            if (e->body == BODY_STATIC && (e->mesh == MESH_CUBE || e->mesh == MESH_SPHERE)
+                                && !e->script[0] && !e->controller && e->follow_dist <= 0) {
+                                renderer_batch_add(e); /* merged static world: 1 draw call */
+                                continue;
+                            }
+                            renderer_draw_entity(e, 0);
+                        }
+                        renderer_batch_flush();
+                        if (G.mode == MODE_EDIT && G.selected >= 0 && G.selected < G.scene.count) {
+                            Entity *s = &G.scene.e[G.selected];
+                            if (s->active) {
+                                if (s->mesh == MESH_OBJ && s->mesh_path[0]) {
+                                    int m = assets_load_obj(s->mesh_path);
+                                    if (m >= 0) renderer_draw_obj(m, s, 1);
+                                    else renderer_draw_entity(s, 1);
+                                } else renderer_draw_entity(s, 1);
+                            }
                         }
                     }
                     if (G.mode == MODE_MENU) {

@@ -12,11 +12,13 @@ typedef struct {
     /* owner: engine.c */
     char projects[VIP_MENU_MAX][64];
     int  nprojects;
+    int  counts[VIP_MENU_MAX];  /* entity count per project (-1 = no scene file) */
+    char root[320];             /* absolute path of the projects/ folder */
     char projsel[64];
     char newname[64];
     char status[256];
     /* owner: gui_frame; engine.c reads + clears */
-    int new_pressed, open_pressed, export_pressed, refresh_pressed;
+    int new_pressed, open_pressed, export_pressed, refresh_pressed, open_folder_pressed;
 } GuiMenu;
 
 typedef struct {

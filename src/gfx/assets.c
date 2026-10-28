@@ -1,4 +1,5 @@
 #include "gfx/assets.h"
+#include "gfx/glload.h"
 #include "core/log.h"
 #include <GLFW/glfw3.h>
 #include <stdio.h>
@@ -99,16 +100,14 @@ int assets_load_obj(const char *path) {
     if (no == 0) { VLOG("assets: %s has 0 usable vertices", path); free(out); return -1; }
 
     struct AObj *m = &assets_meshes[assets_nmeshes];
-    glGenVertexArrays(1, &m->vao);
-    glGenBuffers(1, &m->vbo);
-    glBindVertexArray(m->vao);
-    glBindBuffer(GL_ARRAY_BUFFER, m->vbo);
-    glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)(no * sizeof(float)), out, GL_STATIC_DRAW);
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void *)0);
-    glEnableVertexAttribArray(0);
-    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void *)(3 * sizeof(float)));
-    glEnableVertexAttribArray(1);
-    glBindVertexArray(0);
+    vgl.GenVertexArrays(1, &m->vao); vgl.BindVertexArray(m->vao);
+    vgl.GenBuffers(1, &m->vbo); vgl.BindBuffer(VGL_ARRAY_BUFFER, m->vbo);
+    vgl.BufferData(VGL_ARRAY_BUFFER, (ptrdiff_t)no * (ptrdiff_t)sizeof(float), out, VGL_STATIC_DRAW);
+    vgl.VertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void *)0);
+    vgl.EnableVertexAttribArray(0);
+    vgl.VertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void *)(3 * sizeof(float)));
+    vgl.EnableVertexAttribArray(1);
+    vgl.BindVertexArray(0);
     m->count = no / 6;
     snprintf(m->path, sizeof m->path, "%s", path);
     VLOG("assets: %s -> %d verts", path, m->count);
