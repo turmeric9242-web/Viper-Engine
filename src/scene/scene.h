@@ -32,6 +32,14 @@ typedef struct {
     char name[64];
     Entity e[MAX_ENTITIES];
     int count;
+
+    /* editor / bake settings, saved in the .vscene "settings" line */
+    float sun_az, sun_el, ambient;
+    float oc_cell, oc_cell_y;
+    int oc_quality, lm_res, lm_samples;
+    float ao_strength, ao_radius;
+    float probe_voxel;
+    int probe_sky, show_baked, preview_oc;
 } Scene;
 
 void scene_clear(Scene *s);

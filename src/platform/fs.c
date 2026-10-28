@@ -6,9 +6,11 @@
 #include <sys/stat.h>
 #ifdef _WIN32
 #include <windows.h>
+#include <commdlg.h>
 #include <shellapi.h>
 #include <direct.h>
 #pragma comment(lib, "shell32.lib")
+#pragma comment(lib, "comdlg32.lib")
 #else
 #include <sys/types.h>
 #include <dirent.h>
@@ -134,6 +136,89 @@ int fs_list_dirs(const char *parent, char names[][64], int max) {
     }
 #endif
     return n;
+}
+
+/* case-insensitive ".ext" suffix test; ext == NULL/"" accepts every file */
+static int has_ext(const char *name, const char *ext) {
+    size_t n, e;
+    if (!ext || !ext[0]) return 1;
+    n = strlen(name);
+    e = strlen(ext);
+    if (n <= e) return 0;
+    for (size_t i = 0; i < e; i++) {
+        char a = name[n - e + i], b = ext[i];
+        if (a >= 'A' && a <= 'Z') a = (char)(a - 'A' + 'a');
+        if (b >= 'A' && b <= 'Z') b = (char)(b - 'A' + 'a');
+        if (a != b) return 0;
+    }
+    return 1;
+}
+
+int fs_list_files(const char *parent, char names[][64], int max, const char *ext) {
+    int n = 0;
+    if (!fs_is_dir(parent)) return 0;
+#ifdef _WIN32
+    {
+        char pat[540];
+        WIN32_FIND_DATAA fd;
+        HANDLE h;
+        snprintf(pat, sizeof pat, "%s/*", parent);
+        h = FindFirstFileA(pat, &fd);
+        if (h != INVALID_HANDLE_VALUE) {
+            do {
+                if (n >= max) break;
+                if ((fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0 && has_ext(fd.cFileName, ext))
+                    snprintf(names[n++], 64, "%s", fd.cFileName);
+            } while (FindNextFileA(h, &fd));
+            FindClose(h);
+        }
+    }
+#else
+    {
+        DIR *dir = opendir(parent);
+        if (dir) {
+            struct dirent *de;
+            while (n < max && (de = readdir(dir))) {
+                char p[540];
+                if (de->d_name[0] == '.') continue;
+                snprintf(p, sizeof p, "%s/%s", parent, de->d_name);
+                if (!fs_is_dir(p) && has_ext(de->d_name, ext)) snprintf(names[n++], 64, "%s", de->d_name);
+            }
+            closedir(dir);
+        }
+    }
+#endif
+    return n;
+}
+
+int fs_pick_file(char *out, int n, const char *filter_name, const char *filter_ext) {
+    if (!out || n < 2) return 0;
+    out[0] = 0;
+#ifdef _WIN32
+    {
+        OPENFILENAMEA ofn;
+        char buf[520] = "";
+        char filter[260];
+        snprintf(filter, sizeof filter, "%s (*.%s)%c*.%s%cAll files (*.*)%c*.*%c%c",
+                 filter_name && filter_name[0] ? filter_name : "Files",
+                 filter_ext && filter_ext[0] ? filter_ext : "*",
+                 0,
+                 filter_ext && filter_ext[0] ? filter_ext : "*",
+                 0, 0, 0, 0);
+        memset(&ofn, 0, sizeof ofn);
+        ofn.lStructSize = sizeof ofn;
+        ofn.lpstrFilter = filter;
+        ofn.lpstrFile = buf;
+        ofn.nMaxFile = sizeof buf;
+        ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
+        if (!GetOpenFileNameA(&ofn)) return 0;
+        snprintf(out, (size_t)n, "%s", buf);
+        return 1;
+    }
+#else
+    (void)filter_name; (void)filter_ext;
+    return 0;
+#endif
 }
 
 int fs_getcwd(char *buf, int n) {

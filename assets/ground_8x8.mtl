@@ -1,0 +1,9 @@
+newmtl dirt
+Kd 0.400 0.280 0.180
+
+newmtl grass_a
+Kd 0.300 0.620 0.280
+
+newmtl grass_b
+Kd 0.260 0.550 0.240
+

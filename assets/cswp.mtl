@@ -1,0 +1,6 @@
+newmtl trim
+Kd 0.580 0.550 0.500
+
+newmtl strategy
+Kd 1.000 0.350 1.000
+

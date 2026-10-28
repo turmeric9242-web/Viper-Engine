@@ -38,7 +38,7 @@ static const char *FS =
 typedef struct { unsigned vao, vbo; int count; } Mesh;
 static Mesh meshes[4]; /* [0]=unused none, [1]=cube, [2]=sphere, [3]=merged static batch */
 static unsigned prog;
-static int u_vp, u_model, u_nrm, u_color, u_checker, u_highlight, u_use_vcol;
+static int u_vp, u_model, u_nrm, u_color, u_checker, u_highlight, u_use_vcol, u_unlit;
 static Mat4 Gvp;
 
 /* ---- frustum (6 planes extracted from Gvp, Gribb-Hartmann) ---- */
@@ -238,6 +238,7 @@ void renderer_batch_flush(void) {
     vgl.UniformMatrix4fv(u_nrm, 1, 0, ident.m);
     vgl.Uniform1f(u_use_vcol, 1.0f);
     vgl.Uniform1f(u_highlight, 0.0f);
+    vgl.Uniform1f(u_unlit, 0.0f);
     glDrawArrays(GL_TRIANGLES, 0, batch_verts);
     vgl.Uniform1f(u_use_vcol, 0.0f);
 }
@@ -255,17 +256,65 @@ int renderer_init(void) {
     u_nrm = vgl.GetUniformLocation(prog, "u_nrm");     u_color = vgl.GetUniformLocation(prog, "u_color");
     u_checker = vgl.GetUniformLocation(prog, "u_checker"); u_highlight = vgl.GetUniformLocation(prog, "u_highlight");
     u_use_vcol = vgl.GetUniformLocation(prog, "u_use_vcol");
+    u_unlit = vgl.GetUniformLocation(prog, "u_unlit");
     build_cube(); build_sphere();
     glEnable(GL_DEPTH_TEST);
     glEnable(VGL_MULTISAMPLE);
     return 1;
 }
 
-void renderer_begin(int w, int h, Vec3 sky) {
-    glViewport(0, 0, w, h);
-    glClearColor(sky.x, sky.y, sky.z, 1.0f);
+void renderer_begin(int w, int h, Vec3 sky) { renderer_begin_view(w, h, 0, 0, w, h, sky, sky); }
+
+/* Draw into a sub-rect of the window (the editor viewport). vx/vy use
+   top-left origin window pixels; the GL viewport origin is bottom-left. */
+void renderer_begin_view(int fbw, int fbh, int vx, int vy, int vw, int vh, Vec3 bg, Vec3 sky) {
+    if (vw < 1) vw = 1;
+    if (vh < 1) vh = 1;
+    glDisable(GL_SCISSOR_TEST);
+    glViewport(0, 0, fbw, fbh);
+    glClearColor(bg.x, bg.y, bg.z, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    if (vx || vy || vw != fbw || vh != fbh) {
+        glEnable(GL_SCISSOR_TEST);
+        glScissor(vx, fbh - vy - vh, vw, vh);
+        glViewport(vx, fbh - vy - vh, vw, vh);
+        glClearColor(sky.x, sky.y, sky.z, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        glDisable(GL_SCISSOR_TEST);
+    }
     vgl.UseProgram(prog);
+}
+
+/* ---- immediate-style line batches (gizmo, selection boxes, grid, ghost) ----
+   verts = nverts * 6 floats: position xyz + colour rgb. */
+static unsigned line_vao, line_vbo;
+
+void renderer_lines(const float *verts, int nverts, int depth_test) {
+    if (nverts <= 0) return;
+    if (!line_vao) {
+        vgl.GenVertexArrays(1, &line_vao); vgl.BindVertexArray(line_vao);
+        vgl.GenBuffers(1, &line_vbo); vgl.BindBuffer(VGL_ARRAY_BUFFER, line_vbo);
+        vgl.VertexAttribPointer(0, 3, GL_FLOAT, 0, 6 * sizeof(float), (void *)0);
+        vgl.EnableVertexAttribArray(0);
+        vgl.VertexAttribPointer(2, 3, GL_FLOAT, 0, 6 * sizeof(float), (void *)(3 * sizeof(float)));
+        vgl.EnableVertexAttribArray(2);
+    }
+    vgl.BindVertexArray(line_vao);
+    vgl.BindBuffer(VGL_ARRAY_BUFFER, line_vbo);
+    vgl.BufferData(VGL_ARRAY_BUFFER, (ptrdiff_t)nverts * 6, verts, VGL_DYNAMIC_DRAW);
+    vgl.UseProgram(prog);
+    Mat4 ident = m4_identity();
+    vgl.UniformMatrix4fv(u_vp, 1, 0, Gvp.m);
+    vgl.UniformMatrix4fv(u_model, 1, 0, ident.m);
+    vgl.UniformMatrix4fv(u_nrm, 1, 0, ident.m);
+    vgl.Uniform1f(u_use_vcol, 1.0f);
+    vgl.Uniform1f(u_unlit, 1.0f);
+    vgl.Uniform1f(u_highlight, 0.0f);
+    vgl.Uniform1f(u_checker, 0.0f);
+    if (!depth_test) glDisable(GL_DEPTH_TEST);
+    glDrawArrays(GL_LINES, 0, nverts);
+    if (!depth_test) glEnable(GL_DEPTH_TEST);
+    vgl.Uniform1f(u_unlit, 0.0f);
 }
 
 void renderer_set_view_proj(Mat4 vp) { Gvp = vp; planes_valid = 0; extract_planes(); }
@@ -281,6 +330,7 @@ static void draw_mesh(const Mesh *m, const Entity *e, int highlight) {
     vgl.Uniform1f(u_checker, e->checker ? 1.0f : 0.0f);
     vgl.Uniform1f(u_highlight, highlight ? 1.0f : 0.0f);
     vgl.Uniform1f(u_use_vcol, 0.0f);
+    vgl.Uniform1f(u_unlit, 0.0f);
     vgl.BindVertexArray(m->vao);
     glDrawArrays(GL_TRIANGLES, 0, m->count);
 }

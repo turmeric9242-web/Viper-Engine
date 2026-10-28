@@ -1,0 +1,7 @@
+newmtl adobe
+Kd 1.000 1.000 1.000
+map_Kd adobe.png
+
+newmtl trim
+Kd 0.580 0.550 0.500
+

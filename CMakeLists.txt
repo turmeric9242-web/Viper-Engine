@@ -56,7 +56,9 @@ endif()
 # Put scenes/ and scripts/ next to the executable.
 add_custom_command(TARGET viper POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/scenes $<TARGET_FILE_DIR:viper>/scenes
-  COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/scripts $<TARGET_FILE_DIR:viper>/scripts)
+  COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/scripts $<TARGET_FILE_DIR:viper>/scripts
+  COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/assets $<TARGET_FILE_DIR:viper>/assets
+  COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/market $<TARGET_FILE_DIR:viper>/market)
 
 if(VIPER_BUILD_TESTS)
   add_executable(viper_test tests/test_core.c ${VIPER_LOGIC_SRC})

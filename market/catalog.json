@@ -1,0 +1,70 @@
+{
+  "name": "Viper Starter",
+  "items": [
+    {
+      "name": "Fence",
+      "author": "Viper",
+      "license": "CC0",
+      "description": "Wooden fence section, 2 m",
+      "tags": [
+        "props",
+        "outdoor"
+      ],
+      "files": [
+        {
+          "url": "starter/fence.obj",
+          "name": "fence.obj",
+          "sha256": "734200a75c850b125d1c9f3e7536d885f6fc8edd8fa9dbb3c22ef6ab21165631"
+        },
+        {
+          "url": "starter/fence.mtl",
+          "name": "fence.mtl",
+          "sha256": "b755651f768868190ec6ce66b3289ba97a872b58110e746486ae9bdbb0560b94"
+        }
+      ]
+    },
+    {
+      "name": "Barrel",
+      "author": "Viper",
+      "license": "CC0",
+      "description": "Storage barrel",
+      "tags": [
+        "props"
+      ],
+      "files": [
+        {
+          "url": "starter/barrel.obj",
+          "name": "barrel.obj",
+          "sha256": "cc2902651b6e891ea323b86dae27692a22c76a1bdeccfe4ab2898d83f3e59aa0"
+        },
+        {
+          "url": "starter/barrel.mtl",
+          "name": "barrel.mtl",
+          "sha256": "45eeba4a147df456453c0c9dbda1e1fd34d9868fcb6ff33e30491e972075736c"
+        }
+      ]
+    },
+    {
+      "name": "Lamp Post",
+      "author": "Viper",
+      "license": "CC0",
+      "description": "Street lamp post, 3.3 m",
+      "tags": [
+        "props",
+        "outdoor"
+      ],
+      "files": [
+        {
+          "url": "starter/lamp_post.obj",
+          "name": "lamp_post.obj",
+          "sha256": "5ed33941ad358b0d4b846fd789be14cba2b6335429b161f9af493cb0dbe7214d"
+        },
+        {
+          "url": "starter/lamp_post.mtl",
+          "name": "lamp_post.mtl",
+          "sha256": "47f2d5b9b4f46a3a90f064748a78658bb1632d651ba08b6711ac4ce694ce4bb9"
+        }
+      ]
+    }
+  ]
+}

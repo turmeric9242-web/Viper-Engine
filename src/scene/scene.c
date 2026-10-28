@@ -16,7 +16,15 @@ static int lookup(const char **names, int n, const char *s) {
     return -1;
 }
 
-void scene_clear(Scene *s) { memset(s, 0, sizeof *s); copy_str(s->name, sizeof s->name, "untitled"); }
+void scene_clear(Scene *s) {
+    memset(s, 0, sizeof *s);
+    copy_str(s->name, sizeof s->name, "untitled");
+    s->sun_az = 45.0f; s->sun_el = 50.0f; s->ambient = 0.4f;
+    s->oc_cell = 4.0f; s->oc_cell_y = 2.5f; s->oc_quality = 1;
+    s->lm_res = 512; s->lm_samples = 8;
+    s->ao_strength = 0.8f; s->ao_radius = 3.0f;
+    s->probe_voxel = 2.0f; s->probe_sky = 1; s->show_baked = 1;
+}
 
 Entity *scene_add(Scene *s, const char *name) {
     if (s->count >= MAX_ENTITIES) return NULL;
@@ -46,6 +54,13 @@ int scene_load(Scene *s, const char *path) {
         char *rest = key; while (*rest && !isspace((unsigned char)*rest)) rest++;
         if (*rest) { *rest++ = 0; while (isspace((unsigned char)*rest)) rest++; }
         if (!strcmp(key, "scene")) { copy_str(s->name, sizeof s->name, rest); continue; }
+        if (!strcmp(key, "settings")) {
+            sscanf(rest, "%f %f %f %f %f %d %d %d %f %f %f %d",
+                   &s->sun_az, &s->sun_el, &s->ambient, &s->oc_cell, &s->oc_cell_y,
+                   &s->oc_quality, &s->lm_res, &s->lm_samples,
+                   &s->ao_strength, &s->ao_radius, &s->probe_voxel, &s->probe_sky);
+            continue;
+        }
         if (!strcmp(key, "entity")) {
             cur = scene_add(s, *rest ? rest : "Entity");
             if (!cur) VLOG("%s:%d: too many entities", path, ln);

@@ -1,0 +1,4 @@
+newmtl crate_tex
+Kd 1.000 1.000 1.000
+map_Kd crate.png
+

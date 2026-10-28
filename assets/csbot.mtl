@@ -1,0 +1,10 @@
+newmtl cloth
+Kd 0.450 0.350 0.240
+
+newmtl skin
+Kd 0.850 0.660 0.520
+
+newmtl metal
+Kd 1.000 1.000 1.000
+map_Kd metal.png
+

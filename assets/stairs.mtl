@@ -1,0 +1,6 @@
+newmtl stone
+Kd 0.550 0.550 0.580
+
+newmtl stone_dark
+Kd 0.380 0.380 0.420
+
