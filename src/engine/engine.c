@@ -241,6 +241,11 @@ int engine_run(const char *scene_path, const char *argv0) {
     G.win = window_create(1280, 720, "Viper Engine");
     if (!G.win) return 1;
     if (!renderer_init()) { VLOG("renderer failed to initialise"); window_destroy(G.win); return 1; }
+    if (!gui_init(window_glfw(G.win))) {
+        VLOG("GUI failed to initialise");
+        window_destroy(G.win);
+        return 1;
+    }
     if (G.scene_path[0]) {
         if (!scene_load(&G.scene, G.scene_path)) {
             VLOG("could not read %s - starting with a fresh floor", G.scene_path);
@@ -250,15 +255,10 @@ int engine_run(const char *scene_path, const char *argv0) {
         G.selected = -1;
         G.cam_pos = v3(0, 6, 14); G.cam_pitch = -0.35f;
         G.mode = MODE_EDIT;
-        VLOG("v0.2 ready. EDIT: hold RMB + WASD/QE to fly | TAB select | arrows/PgUp/PgDn move | R rotate | 1/2 add | M browser | F2 save | F5 play");
+        VLOG("v0.3 ready. EDIT: hold RMB + WASD/QE to fly | TAB select | arrows/PgUp/PgDn move | R rotate | 1/2 add | M browser | F2 save | F5 play | GUI panels both sides");
     } else {
         G.mode = MODE_MENU;
         menu_refresh();
-        if (!gui_init(window_glfw(G.win))) {
-            VLOG("GUI failed to initialise");
-            window_destroy(G.win);
-            return 1;
-        }
         VLOG("project browser ready. pick or create a project");
     }
 
@@ -266,6 +266,7 @@ int engine_run(const char *scene_path, const char *argv0) {
         double last = window_time(), fps_t = last;
         int frames = 0;
         char title[256] = "Viper Engine";
+        GuiEditor ed;
         while (!window_should_close(G.win)) {
             window_poll(G.win);
             const Input *in = window_input(G.win);
@@ -275,7 +276,6 @@ int engine_run(const char *scene_path, const char *argv0) {
 
             if (G.mode == MODE_MENU) {
                 if (in->pressed[VKEY_ESC]) window_request_close(G.win);
-                gui_frame(&G.menu);
                 if (G.menu.new_pressed) { G.menu.new_pressed = 0; menu_new(); }
                 if (G.menu.open_pressed) { G.menu.open_pressed = 0; menu_open(); }
                 if (G.menu.export_pressed) { G.menu.export_pressed = 0; menu_export(); }
@@ -305,6 +305,28 @@ int engine_run(const char *scene_path, const char *argv0) {
                             renderer_draw_entity(&G.scene.e[i], G.mode == MODE_EDIT && i == G.selected);
                         }
                     }
+                    if (G.mode == MODE_MENU) {
+                        gui_frame(&G.menu);
+                    } else if (G.mode == MODE_EDIT) {
+                        memset(&ed, 0, sizeof ed);
+                        ed.scene = &G.scene;
+                        ed.selected = G.selected;
+                        gui_editor_frame(&ed);
+                        if (ed.save_pressed) {
+                            if (scene_save(&G.scene, G.scene_path)) VLOG("saved %s", G.scene_path);
+                            else VLOG("could not save %s", G.scene_path);
+                        }
+                        if (ed.duplicate_pressed && G.selected >= 0 && G.selected < G.scene.count) {
+                            Entity *src = &G.scene.e[G.selected];
+                            Entity *dst = scene_add(&G.scene, src->name);
+                            if (dst) { *dst = *src; dst->pos.x += 1.0f; }
+                        }
+                        if (ed.delete_pressed && G.selected >= 0 && G.selected < G.scene.count) {
+                            G.scene.e[G.selected].active = 0;
+                            G.selected = -1;
+                        }
+                        G.selected = ed.selected;
+                    }
                 }
             }
             window_swap(G.win);
@@ -313,7 +335,7 @@ int engine_run(const char *scene_path, const char *argv0) {
             if (now - fps_t >= 0.5) {
                 const char *sel = (G.mode == MODE_EDIT && G.selected >= 0 && G.selected < G.scene.count)
                                       ? G.scene.e[G.selected].name : "-";
-                snprintf(title, sizeof title, "Viper Engine v0.2 | %s | %s | selected: %s | %.0f fps",
+                snprintf(title, sizeof title, "Viper Engine v0.3 | %s | %s | selected: %s | %.0f fps",
                          G.mode == MODE_MENU ? "BROWSER" : G.mode == MODE_EDIT ? "EDIT" : "PLAY",
                          G.scene.name, sel, frames / (now - fps_t));
                 window_set_title(G.win, title);
@@ -321,7 +343,7 @@ int engine_run(const char *scene_path, const char *argv0) {
             }
         }
     }
-    if (G.mode == MODE_MENU) gui_shutdown();
+    gui_shutdown();
     window_destroy(G.win);
     return 0;
 }

@@ -3,6 +3,10 @@
 #include "core/vmath.h"
 #define MAX_ENTITIES 256
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 typedef enum { MESH_NONE, MESH_CUBE, MESH_SPHERE, MESH_OBJ } MeshType;
 typedef enum { BODY_NONE, BODY_STATIC, BODY_DYNAMIC } BodyType;
 
@@ -36,4 +40,8 @@ int scene_load(Scene *s, const char *path);
 int scene_save(const Scene *s, const char *path);
 Mat4 entity_model(const Entity *e);
 Mat4 entity_normal_matrix(const Entity *e);
+
+#ifdef __cplusplus
+}
+#endif
 #endif
