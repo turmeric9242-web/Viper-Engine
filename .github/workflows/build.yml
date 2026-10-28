@@ -1,0 +1,23 @@
+name: build-windows
+on: [push, workflow_dispatch]
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S . -B build -A x64
+      - name: Build
+        run: cmake --build build --config Release
+      - name: Logic tests
+        run: build\Release\viper_test.exe
+      - name: Package
+        run: |
+          mkdir dist
+          copy build\Release\viper.exe dist\
+          xcopy /E /I /Y scenes dist\scenes
+          xcopy /E /I /Y scripts dist\scripts
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ViperEngine-v0.1-windows
+          path: dist

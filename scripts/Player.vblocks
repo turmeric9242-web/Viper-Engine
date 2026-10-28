@@ -1,0 +1,28 @@
+# Viper Blocks script: Player controller (third person)
+on start
+  print Ready - WASD move, SHIFT run, SPACE jump, mouse to turn, R respawn
+
+on update
+  mouse_look 0.12
+  set_var speed 6
+  if key_down SHIFT
+    set_var speed 10
+  end
+  if key_down W
+    walk 1 0 $speed
+  end
+  if key_down S
+    walk -1 0 $speed
+  end
+  if key_down D
+    walk 0 1 $speed
+  end
+  if key_down A
+    walk 0 -1 $speed
+  end
+
+on key_pressed SPACE
+  jump 9
+
+on key_pressed R
+  set_pos 0 3 0

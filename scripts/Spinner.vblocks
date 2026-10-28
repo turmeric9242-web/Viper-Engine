@@ -1,0 +1,14 @@
+# Viper Blocks script: spins and pulses a collectible-style cube
+on start
+  set_var t 0
+on update
+  turn 90
+  change_var t 1
+  if gt $t 30
+    set_color 1 0.9 0.2
+    if gt $t 60
+      set_var t 0
+    end
+  else
+    set_color 1 0.5 0.1
+  end

@@ -1,0 +1,4 @@
+#include "engine/engine.h"
+int main(int argc, char **argv) {
+    return engine_run(argc > 1 ? argv[1] : "scenes/start.vscene");
+}
