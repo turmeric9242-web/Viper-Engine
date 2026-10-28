@@ -4,8 +4,8 @@
 #include <string.h>
 #include <sys/stat.h>
 #ifdef _WIN32
+#include <windows.h>
 #include <direct.h>
-#include <io.h>
 #else
 #include <sys/types.h>
 #include <dirent.h>
@@ -58,19 +58,19 @@ int fs_copy_tree(const char *src, const char *dst) {
         int ok = 1;
 #ifdef _WIN32
         char pat[540], s[540], d[540];
-        _finddata_t fd;
-        intptr_t h;
-        snprintf(pat, sizeof pat, "%s/*.*", src);
-        h = _findfirst(pat, &fd);
-        if (h != -1) {
+        WIN32_FIND_DATAA fd;
+        HANDLE h;
+        snprintf(pat, sizeof pat, "%s/*", src);
+        h = FindFirstFileA(pat, &fd);
+        if (h != INVALID_HANDLE_VALUE) {
             do {
-                if (!strcmp(fd.name, ".") || !strcmp(fd.name, "..")) continue;
-                snprintf(s, sizeof s, "%s/%s", src, fd.name);
-                snprintf(d, sizeof d, "%s/%s", dst, fd.name);
-                if (fd.attrib & _A_SUBDIR) { if (!fs_copy_tree(s, d)) ok = 0; }
+                if (!strcmp(fd.cFileName, ".") || !strcmp(fd.cFileName, "..")) continue;
+                snprintf(s, sizeof s, "%s/%s", src, fd.cFileName);
+                snprintf(d, sizeof d, "%s/%s", dst, fd.cFileName);
+                if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) { if (!fs_copy_tree(s, d)) ok = 0; }
                 else if (!fs_copy_file(s, d)) ok = 0;
-            } while (_findnext(h, &fd) == 0);
-            _findclose(h);
+            } while (FindNextFileA(h, &fd));
+            FindClose(h);
         }
 #else
         DIR *dir = opendir(src);
@@ -99,17 +99,17 @@ int fs_list_dirs(const char *parent, char names[][64], int max) {
 #ifdef _WIN32
     {
         char pat[540];
-        _finddata_t fd;
-        intptr_t h;
-        snprintf(pat, sizeof pat, "%s/*.*", parent);
-        h = _findfirst(pat, &fd);
-        if (h != -1) {
+        WIN32_FIND_DATAA fd;
+        HANDLE h;
+        snprintf(pat, sizeof pat, "%s/*", parent);
+        h = FindFirstFileA(pat, &fd);
+        if (h != INVALID_HANDLE_VALUE) {
             do {
                 if (n >= max) break;
-                if ((fd.attrib & _A_SUBDIR) && strcmp(fd.name, ".") && strcmp(fd.name, ".."))
-                    snprintf(names[n++], 64, "%s", fd.name);
-            } while (_findnext(h, &fd) == 0);
-            _findclose(h);
+                if ((fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) && strcmp(fd.cFileName, ".") && strcmp(fd.cFileName, ".."))
+                    snprintf(names[n++], 64, "%s", fd.cFileName);
+            } while (FindNextFileA(h, &fd));
+            FindClose(h);
         }
     }
 #else
