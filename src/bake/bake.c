@@ -96,11 +96,11 @@ void bake_world_tris(const Scene *s, TriSoup *out) {
             int id = assets_find_obj(e->mesh_path);
             const float *d = NULL;
             int n = 0;
-            if (id >= 0 && assets_mesh_cpu(id, &d, &n) && n >= 18) {
-                for (int k = 0; k + 17 < n; k += 18) {
+            if (id >= 0 && assets_mesh_cpu(id, &d, &n) && n >= 24) {
+                for (int k = 0; k + 23 < n; k += 24) {
                     Vec3 a = xform(m, v3(d[k + 0], d[k + 1], d[k + 2]));
-                    Vec3 b = xform(m, v3(d[k + 6], d[k + 7], d[k + 8]));
-                    Vec3 c = xform(m, v3(d[k + 12], d[k + 13], d[k + 14]));
+                    Vec3 b = xform(m, v3(d[k + 8], d[k + 9], d[k + 10]));
+                    Vec3 c = xform(m, v3(d[k + 16], d[k + 17], d[k + 18]));
                     soup_push(out, a, b, c);
                 }
             }

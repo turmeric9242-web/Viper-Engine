@@ -47,6 +47,7 @@ typedef struct {
     void (VGL_CALL *BufferData)(unsigned, ptrdiff_t, const void *, unsigned);
     void (VGL_CALL *VertexAttribPointer)(unsigned, int, unsigned, unsigned char, int, const void *);
     void (VGL_CALL *EnableVertexAttribArray)(unsigned);
+    void (VGL_CALL *GenerateMipmap)(unsigned);
 } VGL;
 
 extern VGL vgl;

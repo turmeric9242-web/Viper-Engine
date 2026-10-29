@@ -46,7 +46,7 @@ Window *window_create(int width, int height, const char *title) {
     w->h = h;
     glfwSetWindowUserPointer(h, w);
     glfwMakeContextCurrent(h);
-    glfwSwapInterval(1);
+    glfwSwapInterval(0); /* uncapped frame rate */
     glfwSetKeyCallback(h, key_cb);
     glfwSetCursorPosCallback(h, cursor_cb);
     glfwSetScrollCallback(h, scroll_cb);

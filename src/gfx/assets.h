@@ -10,7 +10,7 @@ typedef struct AObj {
     unsigned vao, vbo;
     int count;
     char path[128];
-    float *cpu;   /* interleaved pos+nrm, stride 6 — kept for the bakers */
+    float *cpu;   /* interleaved pos+nrm+uv, stride 8 — kept for the bakers */
     int ncpu;
 } AObj;
 

@@ -13,5 +13,6 @@ int vgl_load(void) {
     LOAD(GenVertexArrays); LOAD(BindVertexArray); LOAD(GenBuffers); LOAD(BindBuffer);
     LOAD(BufferData); LOAD(VertexAttribPointer); LOAD(EnableVertexAttribArray);
     LOAD(Uniform1i); LOAD(Uniform4f); LOAD(ActiveTexture); LOAD(TexImage3D);
+    LOAD(GenerateMipmap);
     return 1;
 }

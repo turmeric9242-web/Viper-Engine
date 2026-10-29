@@ -3,6 +3,7 @@
 #include "gfx/glload.h"
 #include "core/log.h"
 #include <GLFW/glfw3.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -15,23 +16,26 @@ static const char *VS =
     "layout(location=0) in vec3 a_pos;\n"
     "layout(location=1) in vec3 a_nrm;\n"
     "layout(location=2) in vec4 a_vcol;\n"
+    "layout(location=3) in vec2 a_uv;\n"
     "uniform mat4 u_vp; uniform mat4 u_model; uniform mat4 u_nrm;\n"
-    "out vec3 v_n; out vec3 v_wp; out vec4 v_vc;\n"
+    "out vec3 v_n; out vec3 v_wp; out vec4 v_vc; out vec2 v_uv;\n"
     "void main(){ vec4 wp = u_model * vec4(a_pos, 1.0); v_wp = wp.xyz;\n"
-    "  v_n = mat3(u_nrm) * a_nrm; v_vc = a_vcol; gl_Position = u_vp * wp; }\n";
+    "  v_n = mat3(u_nrm) * a_nrm; v_vc = a_vcol; v_uv = a_uv; gl_Position = u_vp * wp; }\n";
 static const char *FS =
     "#version 330 core\n"
-    "in vec3 v_n; in vec3 v_wp; in vec4 v_vc;\n"
+    "in vec3 v_n; in vec3 v_wp; in vec4 v_vc; in vec2 v_uv;\n"
     "uniform vec3 u_color; uniform float u_checker; uniform float u_highlight;\n"
     "uniform float u_use_vcol; uniform float u_unlit;\n"
     "uniform sampler2D u_lm; uniform vec4 u_lmb; uniform float u_use_lm;\n"
     "uniform sampler3D u_pr; uniform vec3 u_prb; uniform vec3 u_prs; uniform float u_use_pr;\n"
+    "uniform sampler2D u_tex; uniform float u_use_tex;\n"
     "uniform vec3 u_cam; uniform vec4 u_fog;\n"
     "out vec4 o;\n"
     "void main(){\n"
     "  vec3 n = normalize(v_n); vec3 l = normalize(vec3(0.4, 1.0, 0.3));\n"
     "  float d = max(dot(n, l), 0.0);\n"
     "  vec3 c = u_use_vcol > 0.5 ? v_vc.rgb : u_color;\n"
+    "  if (u_use_tex > 0.5) c *= texture(u_tex, v_uv).rgb;\n"
     "  float chk = u_use_vcol > 0.5 ? v_vc.a : u_checker;\n"
     "  if (chk > 0.5) { float k = mod(floor(v_wp.x) + floor(v_wp.z), 2.0); c *= mix(0.75, 1.0, k); }\n"
     "  vec3 col = c * (0.28 + 0.72 * d);\n"
@@ -55,6 +59,7 @@ static Mesh meshes[4]; /* [0]=unused none, [1]=cube, [2]=sphere, [3]=merged stat
 static unsigned prog;
 static int u_vp, u_model, u_nrm, u_color, u_checker, u_highlight, u_use_vcol, u_unlit;
 static int u_lm, u_lmb, u_use_lm, u_pr, u_prb, u_prs, u_use_pr;
+static int u_tex, u_use_tex;
 static int u_cam, u_fog;
 static Vec3 cam_pos = {0, 0, 0};
 static float fog_start = 1e5f, fog_end = 2e5f;
@@ -62,6 +67,35 @@ static unsigned lm_tex, pr_tex;
 static float lm_bounds[4] = {0, 0, 1, 1};
 static float pr_min[3] = {0, 0, 0}, pr_scale[3] = {1, 1, 1};
 static Mat4 Gvp;
+
+/* ---- per-entity texture cache (keyed by path, loaded on first use) ---- */
+#define TEX_MAX 64
+static struct { char path[128]; unsigned tex; } tex_cache[TEX_MAX];
+static int tex_ncache;
+static unsigned white_tex;
+
+static unsigned tex_for(const char *path) {
+    if (!path || !path[0]) return 0;
+    for (int i = 0; i < tex_ncache; i++)
+        if (!strcmp(tex_cache[i].path, path)) return tex_cache[i].tex;
+    int id = assets_load_texture(path);
+    if (!id) return 0;
+    if (tex_ncache >= TEX_MAX) return (unsigned)id; /* full: load un-cached */
+    snprintf(tex_cache[tex_ncache].path, sizeof tex_cache[tex_ncache].path, "%s", path);
+    tex_cache[tex_ncache].tex = (unsigned)id;
+    tex_ncache++;
+    return (unsigned)id;
+}
+
+/* bind the entity's texture (if any) to unit 2; returns the u_use_tex flag */
+static float bind_entity_tex(const Entity *e) {
+    unsigned t = 0;
+    if (e && e->tex_path[0]) t = tex_for(e->tex_path);
+    vgl.ActiveTexture(VGL_TEXTURE0 + 2);
+    glBindTexture(GL_TEXTURE_2D, t ? t : white_tex);
+    vgl.ActiveTexture(VGL_TEXTURE0);
+    return t ? 1.0f : 0.0f;
+}
 
 /* ---- frustum (6 planes extracted from Gvp, Gribb-Hartmann) ---- */
 typedef struct { float x, y, z, w; } Plane;
@@ -130,43 +164,50 @@ static Mesh upload(const float *data, int floats, int stride, int dynamic) {
         vgl.VertexAttribPointer(2, 4, GL_FLOAT, 0, stride * sizeof(float), (void *)(6 * sizeof(float)));
         vgl.EnableVertexAttribArray(2);
     }
+    if (stride == 8) { /* pos3 + nrm3 + uv2 */
+        vgl.VertexAttribPointer(3, 2, GL_FLOAT, 0, stride * sizeof(float), (void *)(6 * sizeof(float)));
+        vgl.EnableVertexAttribArray(3);
+    }
     return m;
 }
 
-static void push(float *buf, int *n, Vec3 p, Vec3 nrm) {
+static void push(float *buf, int *n, Vec3 p, Vec3 nrm, float u, float v) {
     buf[(*n)++] = p.x; buf[(*n)++] = p.y; buf[(*n)++] = p.z;
     buf[(*n)++] = nrm.x; buf[(*n)++] = nrm.y; buf[(*n)++] = nrm.z;
+    buf[(*n)++] = u; buf[(*n)++] = v;
 }
 
 static void build_cube(void) {
     static const Vec3 N[6] = {{1,0,0},{-1,0,0},{0,1,0},{0,-1,0},{0,0,1},{0,0,-1}};
     static const Vec3 U[6] = {{0,1,0},{0,0,1},{0,0,1},{1,0,0},{1,0,0},{0,1,0}}; /* u x v == normal */
     static const Vec3 V[6] = {{0,0,1},{0,1,0},{1,0,0},{0,0,1},{0,1,0},{1,0,0}};
-    float buf[36 * 6]; int n = 0;
+    float buf[36 * 8]; int n = 0;
     for (int f = 0; f < 6; f++) {
         Vec3 c = v3_mul(N[f], 0.5f), u = v3_mul(U[f], 0.5f), v = v3_mul(V[f], 0.5f);
         Vec3 p0 = v3_sub(v3_sub(c, u), v), p1 = v3_sub(v3_add(c, u), v);
         Vec3 p2 = v3_add(v3_add(c, u), v), p3 = v3_add(v3_sub(c, u), v);
-        push(buf, &n, p0, N[f]); push(buf, &n, p1, N[f]); push(buf, &n, p2, N[f]);
-        push(buf, &n, p0, N[f]); push(buf, &n, p2, N[f]); push(buf, &n, p3, N[f]);
+        push(buf, &n, p0, N[f], 0, 1); push(buf, &n, p1, N[f], 1, 1); push(buf, &n, p2, N[f], 1, 0);
+        push(buf, &n, p0, N[f], 0, 1); push(buf, &n, p2, N[f], 1, 0); push(buf, &n, p3, N[f], 0, 0);
     }
-    meshes[MESH_CUBE] = upload(buf, n, 6, 0);
+    meshes[MESH_CUBE] = upload(buf, n, 8, 0);
 }
 
 static void build_sphere(void) {
     enum { ST = 16, SL = 24 };
-    float *buf = (float *)malloc(sizeof(float) * ST * SL * 6 * 6); int n = 0;
+    float *buf = (float *)malloc(sizeof(float) * ST * SL * 6 * 8); int n = 0;
     for (int i = 0; i < ST; i++) for (int j = 0; j < SL; j++) {
         float a0 = VIPER_PI * i / ST, a1 = VIPER_PI * (i + 1) / ST;
         float b0 = 2 * VIPER_PI * j / SL, b1 = 2 * VIPER_PI * (j + 1) / SL;
+        float u0 = (float)j / SL, u1 = (float)(j + 1) / SL;
+        float v0 = (float)i / ST, v1 = (float)(i + 1) / ST;
         Vec3 p00 = v3(sinf(a0) * cosf(b0), cosf(a0), sinf(a0) * sinf(b0));
         Vec3 p01 = v3(sinf(a0) * cosf(b1), cosf(a0), sinf(a0) * sinf(b1));
         Vec3 p10 = v3(sinf(a1) * cosf(b0), cosf(a1), sinf(a1) * sinf(b0));
         Vec3 p11 = v3(sinf(a1) * cosf(b1), cosf(a1), sinf(a1) * sinf(b1));
-        push(buf, &n, v3_mul(p00, .5f), p00); push(buf, &n, v3_mul(p10, .5f), p10); push(buf, &n, v3_mul(p11, .5f), p11);
-        push(buf, &n, v3_mul(p00, .5f), p00); push(buf, &n, v3_mul(p11, .5f), p11); push(buf, &n, v3_mul(p01, .5f), p01);
+        push(buf, &n, v3_mul(p00, .5f), p00, u0, v0); push(buf, &n, v3_mul(p10, .5f), p10, u0, v1); push(buf, &n, v3_mul(p11, .5f), p11, u1, v1);
+        push(buf, &n, v3_mul(p00, .5f), p00, u0, v0); push(buf, &n, v3_mul(p11, .5f), p11, u1, v1); push(buf, &n, v3_mul(p01, .5f), p01, u1, v0);
     }
-    meshes[MESH_SPHERE] = upload(buf, n, 6, 0);
+    meshes[MESH_SPHERE] = upload(buf, n, 8, 0);
     free(buf);
 }
 
@@ -180,10 +221,11 @@ void renderer_batch_reset(void) { batch_n = 0; batch_verts = 0; }
 void renderer_batch_add(const Entity *e) {
     if (!renderer_entity_visible(e)) return;
     if (e->mesh != MESH_CUBE && e->mesh != MESH_SPHERE) return;
+    if (e->tex_path[0]) return; /* textured units draw individually (per-entity bind) */
 
     /* regenerate the unit mesh triangles (same builders as init) and bake
        them through the entity's model matrix into world space */
-    static float unit[16384]; /* sphere = 16*24*6*6 = 13824 floats */
+    static float unit[32768]; /* sphere = 16*24*6*8 = 18432 floats */
     int un = 0;
     if (e->mesh == MESH_CUBE) {
         static const Vec3 N[6] = {{1,0,0},{-1,0,0},{0,1,0},{0,-1,0},{0,0,1},{0,0,-1}};
@@ -193,30 +235,32 @@ void renderer_batch_add(const Entity *e) {
             Vec3 c = v3_mul(N[f], 0.5f), u = v3_mul(U[f], 0.5f), v = v3_mul(V[f], 0.5f);
             Vec3 p0 = v3_sub(v3_sub(c, u), v), p1 = v3_sub(v3_add(c, u), v);
             Vec3 p2 = v3_add(v3_add(c, u), v), p3 = v3_add(v3_sub(c, u), v);
-            push(unit, &un, p0, N[f]); push(unit, &un, p1, N[f]); push(unit, &un, p2, N[f]);
-            push(unit, &un, p0, N[f]); push(unit, &un, p2, N[f]); push(unit, &un, p3, N[f]);
+            push(unit, &un, p0, N[f], 0, 1); push(unit, &un, p1, N[f], 1, 1); push(unit, &un, p2, N[f], 1, 0);
+            push(unit, &un, p0, N[f], 0, 1); push(unit, &un, p2, N[f], 1, 0); push(unit, &un, p3, N[f], 0, 0);
         }
     } else {
         enum { ST = 16, SL = 24 };
         for (int i = 0; i < ST; i++) for (int j = 0; j < SL; j++) {
             float a0 = VIPER_PI * i / ST, a1 = VIPER_PI * (i + 1) / ST;
             float b0 = 2 * VIPER_PI * j / SL, b1 = 2 * VIPER_PI * (j + 1) / SL;
+            float u0 = (float)j / SL, u1 = (float)(j + 1) / SL;
+            float v0 = (float)i / ST, v1 = (float)(i + 1) / ST;
             Vec3 p00 = v3(sinf(a0) * cosf(b0), cosf(a0), sinf(a0) * sinf(b0));
             Vec3 p01 = v3(sinf(a0) * cosf(b1), cosf(a0), sinf(a0) * sinf(b1));
             Vec3 p10 = v3(sinf(a1) * cosf(b0), cosf(a1), sinf(a1) * sinf(b0));
             Vec3 p11 = v3(sinf(a1) * cosf(b1), cosf(a1), sinf(a1) * sinf(b1));
-            push(unit, &un, v3_mul(p00, .5f), p00); push(unit, &un, v3_mul(p10, .5f), p10); push(unit, &un, v3_mul(p11, .5f), p11);
-            push(unit, &un, v3_mul(p00, .5f), p00); push(unit, &un, v3_mul(p11, .5f), p11); push(unit, &un, v3_mul(p01, .5f), p01);
+            push(unit, &un, v3_mul(p00, .5f), p00, u0, v0); push(unit, &un, v3_mul(p10, .5f), p10, u0, v1); push(unit, &un, v3_mul(p11, .5f), p11, u1, v1);
+            push(unit, &un, v3_mul(p00, .5f), p00, u0, v0); push(unit, &un, v3_mul(p11, .5f), p11, u1, v1); push(unit, &un, v3_mul(p01, .5f), p01, u1, v0);
         }
     }
 
     Mat4 model = entity_model(e), nrm = entity_normal_matrix(e);
-    int need = batch_n + un / 6 * 10;
+    int need = batch_n + un / 8 * 10;
     if (need > batch_cap) {
         batch_cap = need * 2 + 4096;
         batch = (float *)realloc(batch, (size_t)batch_cap * sizeof(float));
     }
-    for (int i = 0; i < un; i += 6) {
+    for (int i = 0; i < un; i += 8) {
         Vec3 p = v3(unit[i], unit[i + 1], unit[i + 2]);
         Vec3 nv = v3(unit[i + 3], unit[i + 4], unit[i + 5]);
         /* transform point + normal by the model / normal matrix (column-major) */
@@ -261,6 +305,7 @@ void renderer_batch_flush(void) {
     vgl.Uniform1f(u_use_vcol, 1.0f);
     vgl.Uniform1f(u_highlight, 0.0f);
     vgl.Uniform1f(u_unlit, 0.0f);
+    vgl.Uniform1f(u_use_tex, 0.0f);
     glDrawArrays(GL_TRIANGLES, 0, batch_verts);
     vgl.Uniform1f(u_use_vcol, 0.0f);
 }
@@ -283,10 +328,22 @@ int renderer_init(void) {
     u_use_lm = vgl.GetUniformLocation(prog, "u_use_lm");
     u_pr = vgl.GetUniformLocation(prog, "u_pr");         u_prb = vgl.GetUniformLocation(prog, "u_prb");
     u_prs = vgl.GetUniformLocation(prog, "u_prs");       u_use_pr = vgl.GetUniformLocation(prog, "u_use_pr");
+    u_tex = vgl.GetUniformLocation(prog, "u_tex");       u_use_tex = vgl.GetUniformLocation(prog, "u_use_tex");
     u_cam = vgl.GetUniformLocation(prog, "u_cam");       u_fog = vgl.GetUniformLocation(prog, "u_fog");
     vgl.UseProgram(prog);
     vgl.Uniform1i(u_lm, 0);
     vgl.Uniform1i(u_pr, 1);
+    vgl.Uniform1i(u_tex, 2);
+    { /* 1x1 white fallback bound to unit 2 when an entity has no texture */
+        unsigned char px[4] = {255, 255, 255, 255};
+        glGenTextures(1, &white_tex);
+        vgl.ActiveTexture(VGL_TEXTURE0 + 2);
+        glBindTexture(GL_TEXTURE_2D, white_tex);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, px);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        vgl.ActiveTexture(VGL_TEXTURE0);
+    }
     build_cube(); build_sphere();
     glEnable(GL_DEPTH_TEST);
     glEnable(VGL_MULTISAMPLE);
@@ -408,6 +465,7 @@ void renderer_lines(const float *verts, int nverts, int depth_test) {
     vgl.Uniform1f(u_unlit, 1.0f);
     vgl.Uniform1f(u_highlight, 0.0f);
     vgl.Uniform1f(u_checker, 0.0f);
+    vgl.Uniform1f(u_use_tex, 0.0f);
     if (!depth_test) glDisable(GL_DEPTH_TEST);
     glDrawArrays(GL_LINES, 0, nverts);
     if (!depth_test) glEnable(GL_DEPTH_TEST);
@@ -428,6 +486,7 @@ static void draw_mesh(const Mesh *m, const Entity *e, int highlight) {
     vgl.Uniform1f(u_highlight, highlight ? 1.0f : 0.0f);
     vgl.Uniform1f(u_use_vcol, 0.0f);
     vgl.Uniform1f(u_unlit, 0.0f);
+    vgl.Uniform1f(u_use_tex, bind_entity_tex(e));
     vgl.BindVertexArray(m->vao);
     glDrawArrays(GL_TRIANGLES, 0, m->count);
 }
@@ -451,6 +510,7 @@ void renderer_draw_obj(int mesh_id, const Entity *e, int highlight) {
     vgl.Uniform1f(u_checker, 0.0f);
     vgl.Uniform1f(u_highlight, highlight ? 1.0f : 0.0f);
     vgl.Uniform1f(u_use_vcol, 0.0f);
+    vgl.Uniform1f(u_use_tex, bind_entity_tex(e));
     vgl.BindVertexArray(assets_meshes[mesh_id].vao);
     glDrawArrays(GL_TRIANGLES, 0, assets_meshes[mesh_id].count);
 }

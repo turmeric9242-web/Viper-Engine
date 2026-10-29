@@ -1810,7 +1810,7 @@ int engine_run(const char *scene_path, const char *argv0, int play_only) {
                                 if (m >= 0) { renderer_draw_obj(m, e, sel); continue; }
                             }
                             if (!sel && e->body == BODY_STATIC && (e->mesh == MESH_CUBE || e->mesh == MESH_SPHERE)
-                                && !e->script[0] && !e->controller && e->follow_dist <= 0) {
+                                && !e->tex_path[0] && !e->script[0] && !e->controller && e->follow_dist <= 0) {
                                 renderer_batch_add(e);
                                 continue;
                             }
