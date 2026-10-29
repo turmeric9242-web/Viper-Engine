@@ -10,9 +10,8 @@ void window_poll(Window *w);                 /* pumps events, refreshes the Inpu
 const Input *window_input(Window *w);
 void window_swap(Window *w);
 void window_framebuffer_size(Window *w, int *fw, int *fh);
-void window_size(Window *w, int *ww, int *wh);          /* window (logical) size */
 void window_set_title(Window *w, const char *title);
 void window_set_captured(Window *w, int captured); /* hide + lock the cursor for mouse-look */
-void *window_glfw(Window *w);   /* the raw GLFWwindow* (gui module) */
+void window_set_vsync(Window *w, int on);    /* 0 = uncapped frame rate */
 double window_time(void);
 #endif

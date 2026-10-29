@@ -1,16 +1,16 @@
 cmake_minimum_required(VERSION 3.16)
-project(ViperEngine C CXX)
+project(ViperEngine C)
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 if(MSVC)
-  set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+  set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>") # no VC++ redistributable needed
 endif()
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
   set(CMAKE_BUILD_TYPE Release)
 endif()
 option(VIPER_BUILD_TESTS "Build the headless logic tests" ON)
 
-# GLFW + Dear ImGui + stb are downloaded and built automatically
+# GLFW is downloaded and built automatically (static, so viper.exe is a single file).
 include(FetchContent)
 set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
 set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
@@ -18,32 +18,18 @@ set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(GLFW_INSTALL OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(glfw GIT_REPOSITORY https://github.com/glfw/glfw.git GIT_TAG 3.4 GIT_SHALLOW TRUE)
 FetchContent_MakeAvailable(glfw)
-FetchContent_Declare(imgui GIT_REPOSITORY https://github.com/ocornut/imgui.git GIT_TAG v1.89.9 GIT_SHALLOW TRUE)
-FetchContent_MakeAvailable(imgui)
-FetchContent_Declare(stb GIT_REPOSITORY https://github.com/nothings/stb.git GIT_TAG master GIT_SHALLOW TRUE)
-FetchContent_Populate(stb)
-
-add_library(imgui STATIC
-  ${imgui_SOURCE_DIR}/imgui.cpp
-  ${imgui_SOURCE_DIR}/imgui_draw.cpp
-  ${imgui_SOURCE_DIR}/imgui_tables.cpp
-  ${imgui_SOURCE_DIR}/imgui_widgets.cpp
-  ${imgui_SOURCE_DIR}/backends/imgui_impl_glfw.cpp
-  ${imgui_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp)
-target_include_directories(imgui PUBLIC ${imgui_SOURCE_DIR} ${imgui_SOURCE_DIR}/backends)
-target_link_libraries(imgui PUBLIC glfw)
 
 # Engine modules. Each folder under src/ is one module; core logic has no GLFW/GL dependency.
 set(VIPER_LOGIC_SRC
-  src/scene/scene.c src/physics/physics.c src/blocks/blocks.c src/platform/input.c)
+  src/scene/scene.c src/physics/physics.c src/blocks/blocks.c src/platform/input.c
+  src/platform/fs.c src/gfx/image.c src/engine/menu.c)
 set(VIPER_PLATFORM_SRC
-  src/platform/window.c src/platform/fs.c src/gfx/glload.c src/gfx/assets.c src/gfx/renderer.c
-  src/core/thread.c src/bake/bake.c
-  src/gui/gui.cpp src/engine/engine.c src/main.c)
+  src/platform/window.c src/gfx/glload.c src/gfx/texture.c src/gfx/ui.c src/gfx/font.c src/gfx/renderer.c
+  src/engine/engine.c src/main.c)
 
 add_executable(viper ${VIPER_LOGIC_SRC} ${VIPER_PLATFORM_SRC})
-target_include_directories(viper PRIVATE src ${stb_SOURCE_DIR})
-target_link_libraries(viper PRIVATE glfw imgui)
+target_include_directories(viper PRIVATE src)
+target_link_libraries(viper PRIVATE glfw)
 if(WIN32)
   target_link_libraries(viper PRIVATE opengl32)
   if(MINGW)
@@ -54,12 +40,11 @@ elseif(NOT APPLE)
   target_link_libraries(viper PRIVATE OpenGL::GL m)
 endif()
 
-# Put scenes/ and scripts/ next to the executable.
+# Put scenes/, scripts/ and textures/ next to the executable.
 add_custom_command(TARGET viper POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/scenes $<TARGET_FILE_DIR:viper>/scenes
   COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/scripts $<TARGET_FILE_DIR:viper>/scripts
-  COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/assets $<TARGET_FILE_DIR:viper>/assets
-  COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/market $<TARGET_FILE_DIR:viper>/market)
+  COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/textures $<TARGET_FILE_DIR:viper>/textures)
 
 if(VIPER_BUILD_TESTS)
   add_executable(viper_test tests/test_core.c ${VIPER_LOGIC_SRC})

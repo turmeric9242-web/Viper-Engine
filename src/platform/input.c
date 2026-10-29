@@ -5,7 +5,7 @@
 static const struct { const char *name; int key; } NAMES[] = {
     {"SPACE", VKEY_SPACE}, {"ESC", VKEY_ESC}, {"ENTER", VKEY_ENTER}, {"TAB", VKEY_TAB},
     {"DELETE", VKEY_DELETE}, {"RIGHT", VKEY_RIGHT}, {"LEFT", VKEY_LEFT}, {"DOWN", VKEY_DOWN},
-    {"UP", VKEY_UP}, {"PGUP", VKEY_PGUP}, {"PGDN", VKEY_PGDN}, {"F2", VKEY_F2},
+    {"UP", VKEY_UP}, {"PGUP", VKEY_PGUP}, {"PGDN", VKEY_PGDN}, {"F2", VKEY_F2}, {"F3", VKEY_F3}, {"HOME", VKEY_HOME}, {"END", VKEY_END},
     {"F5", VKEY_F5}, {"SHIFT", VKEY_LSHIFT}, {"CTRL", VKEY_LCTRL}
 };
 

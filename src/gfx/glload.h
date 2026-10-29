@@ -16,8 +16,8 @@
 #define VGL_ARRAY_BUFFER 0x8892
 #define VGL_STATIC_DRAW 0x88E4
 #define VGL_MULTISAMPLE 0x809D
-#define VGL_TEXTURE_3D 0x806F
-#define VGL_TEXTURE0 0x84C0
+#define VGL_STREAM_DRAW 0x88E0
+#define VGL_CLAMP_TO_EDGE 0x812F
 
 typedef struct {
     unsigned (VGL_CALL *CreateShader)(unsigned);
@@ -37,9 +37,8 @@ typedef struct {
     void (VGL_CALL *Uniform3f)(int, float, float, float);
     void (VGL_CALL *Uniform1f)(int, float);
     void (VGL_CALL *Uniform1i)(int, int);
-    void (VGL_CALL *Uniform4f)(int, float, float, float, float);
-    void (VGL_CALL *ActiveTexture)(unsigned);
-    void (VGL_CALL *TexImage3D)(unsigned, int, int, int, int, int, int, unsigned, unsigned, const void *);
+    void (VGL_CALL *Uniform2f)(int, float, float);
+    void (VGL_CALL *GenerateMipmap)(unsigned);
     void (VGL_CALL *GenVertexArrays)(int, unsigned *);
     void (VGL_CALL *BindVertexArray)(unsigned);
     void (VGL_CALL *GenBuffers)(int, unsigned *);

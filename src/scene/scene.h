@@ -3,11 +3,7 @@
 #include "core/vmath.h"
 #define MAX_ENTITIES 256
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-typedef enum { MESH_NONE, MESH_CUBE, MESH_SPHERE, MESH_OBJ } MeshType;
+typedef enum { MESH_NONE, MESH_CUBE, MESH_SPHERE } MeshType;
 typedef enum { BODY_NONE, BODY_STATIC, BODY_DYNAMIC } BodyType;
 
 typedef struct {
@@ -15,9 +11,9 @@ typedef struct {
     int active;
     Vec3 pos, rot /* degrees, yaw = rot.y */, scale, color;
     MeshType mesh;
-    char mesh_path[64];     /* for MESH_OBJ: assets/ or project assets/ */
-    char tex_path[64];
     int checker;
+    char texture[32];       /* textures/<name>.png|bmp|tga or a built-in; empty = none */
+    float tile;             /* texture repeats per world unit (1 = one repeat per unit) */
     BodyType body;
     int controller;         /* dynamic body driven by 'walk' blocks */
     Vec3 vel, spawn, input_vel;
@@ -32,14 +28,6 @@ typedef struct {
     char name[64];
     Entity e[MAX_ENTITIES];
     int count;
-
-    /* editor / bake settings, saved in the .vscene "settings" line */
-    float sun_az, sun_el, ambient;
-    float oc_cell, oc_cell_y;
-    int oc_quality, lm_res, lm_samples;
-    float ao_strength, ao_radius;
-    float probe_voxel;
-    int probe_sky, show_baked, preview_oc;
 } Scene;
 
 void scene_clear(Scene *s);
@@ -48,8 +36,4 @@ int scene_load(Scene *s, const char *path);
 int scene_save(const Scene *s, const char *path);
 Mat4 entity_model(const Entity *e);
 Mat4 entity_normal_matrix(const Entity *e);
-
-#ifdef __cplusplus
-}
-#endif
 #endif

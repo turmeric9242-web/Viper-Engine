@@ -5,7 +5,7 @@
 #include <stdlib.h>
 #include <ctype.h>
 
-static const char *MESH_NAMES[] = {"none", "cube", "sphere", "obj"};
+static const char *MESH_NAMES[] = {"none", "cube", "sphere"};
 static const char *BODY_NAMES[] = {"none", "static", "dynamic"};
 
 static void copy_str(char *dst, size_t n, const char *src) {
@@ -16,15 +16,7 @@ static int lookup(const char **names, int n, const char *s) {
     return -1;
 }
 
-void scene_clear(Scene *s) {
-    memset(s, 0, sizeof *s);
-    copy_str(s->name, sizeof s->name, "untitled");
-    s->sun_az = 45.0f; s->sun_el = 50.0f; s->ambient = 0.4f;
-    s->oc_cell = 4.0f; s->oc_cell_y = 2.5f; s->oc_quality = 1;
-    s->lm_res = 512; s->lm_samples = 8;
-    s->ao_strength = 0.8f; s->ao_radius = 3.0f;
-    s->probe_voxel = 2.0f; s->probe_sky = 1; s->show_baked = 1;
-}
+void scene_clear(Scene *s) { memset(s, 0, sizeof *s); copy_str(s->name, sizeof s->name, "untitled"); }
 
 Entity *scene_add(Scene *s, const char *name) {
     if (s->count >= MAX_ENTITIES) return NULL;
@@ -36,6 +28,7 @@ Entity *scene_add(Scene *s, const char *name) {
     e->color = v3(0.8f, 0.8f, 0.8f);
     e->mesh = MESH_CUBE;
     e->script_id = -1;
+    e->tile = 1.0f;
     return e;
 }
 
@@ -54,28 +47,21 @@ int scene_load(Scene *s, const char *path) {
         char *rest = key; while (*rest && !isspace((unsigned char)*rest)) rest++;
         if (*rest) { *rest++ = 0; while (isspace((unsigned char)*rest)) rest++; }
         if (!strcmp(key, "scene")) { copy_str(s->name, sizeof s->name, rest); continue; }
-        if (!strcmp(key, "settings")) {
-            sscanf(rest, "%f %f %f %f %f %d %d %d %f %f %f %d",
-                   &s->sun_az, &s->sun_el, &s->ambient, &s->oc_cell, &s->oc_cell_y,
-                   &s->oc_quality, &s->lm_res, &s->lm_samples,
-                   &s->ao_strength, &s->ao_radius, &s->probe_voxel, &s->probe_sky);
-            continue;
-        }
         if (!strcmp(key, "entity")) {
             cur = scene_add(s, *rest ? rest : "Entity");
             if (!cur) VLOG("%s:%d: too many entities", path, ln);
             continue;
         }
         if (!cur) { VLOG("%s:%d: '%s' outside entity", path, ln, key); continue; }
-        if (!strcmp(key, "mesh")) { int m = lookup(MESH_NAMES, 4, rest); if (m >= 0) cur->mesh = (MeshType)m; }
-        else if (!strcmp(key, "mesh_path")) copy_str(cur->mesh_path, sizeof cur->mesh_path, rest);
-        else if (!strcmp(key, "tex_path")) copy_str(cur->tex_path, sizeof cur->tex_path, rest);
+        if (!strcmp(key, "mesh")) { int m = lookup(MESH_NAMES, 3, rest); if (m >= 0) cur->mesh = (MeshType)m; }
         else if (!strcmp(key, "body")) { int b = lookup(BODY_NAMES, 3, rest); if (b >= 0) cur->body = (BodyType)b; }
         else if (!strcmp(key, "pos")) { sscanf(rest, "%f %f %f", &cur->pos.x, &cur->pos.y, &cur->pos.z); cur->spawn = cur->pos; }
         else if (!strcmp(key, "rot")) sscanf(rest, "%f %f %f", &cur->rot.x, &cur->rot.y, &cur->rot.z);
         else if (!strcmp(key, "scale")) sscanf(rest, "%f %f %f", &cur->scale.x, &cur->scale.y, &cur->scale.z);
         else if (!strcmp(key, "color")) sscanf(rest, "%f %f %f", &cur->color.x, &cur->color.y, &cur->color.z);
         else if (!strcmp(key, "checker")) cur->checker = atoi(rest);
+        else if (!strcmp(key, "texture")) copy_str(cur->texture, sizeof cur->texture, rest);
+        else if (!strcmp(key, "tile")) { float t = (float)atof(rest); if (t > 0.0f) cur->tile = t; }
         else if (!strcmp(key, "controller")) cur->controller = atoi(rest);
         else if (!strcmp(key, "script")) copy_str(cur->script, sizeof cur->script, rest);
         else if (!strcmp(key, "follow")) sscanf(rest, "%f %f", &cur->follow_dist, &cur->follow_height);
@@ -95,9 +81,8 @@ int scene_save(const Scene *s, const char *path) {
         fprintf(f, "\nentity %s\n  mesh %s\n  pos %g %g %g\n  rot %g %g %g\n  scale %g %g %g\n  color %g %g %g\n",
                 e->name, MESH_NAMES[e->mesh], e->pos.x, e->pos.y, e->pos.z, e->rot.x, e->rot.y, e->rot.z,
                 e->scale.x, e->scale.y, e->scale.z, e->color.x, e->color.y, e->color.z);
-        if (e->mesh_path[0]) fprintf(f, "  mesh_path %s\n", e->mesh_path);
-        if (e->tex_path[0]) fprintf(f, "  tex_path %s\n", e->tex_path);
         if (e->checker) fprintf(f, "  checker 1\n");
+        if (e->texture[0]) fprintf(f, "  texture %s\n  tile %g\n", e->texture, e->tile);
         if (e->body) fprintf(f, "  body %s\n", BODY_NAMES[e->body]);
         if (e->controller) fprintf(f, "  controller 1\n");
         if (e->script[0]) fprintf(f, "  script %s\n", e->script);

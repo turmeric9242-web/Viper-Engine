@@ -1,43 +1,28 @@
-# Viper Engine v0.4 (C + GLFW + OpenGL 3.3)
+# Viper Engine v0.2 (C + GLFW + OpenGL 3.3)
 
-3D-only, modular game engine. The Python prototype in `Downloads/Viper/Viper` is the parity spec; this C
-engine is the real thing. v0.4 = editor shell (Import/Map/Bake OC/Lighting/Scripts/Marketplace), baked
-lightmaps + PVS occlusion + light probes, and a **first-person play mode that behaves like `play.py`**.
+3D-only, modular game engine. Create a 3D scene, add a player and floor, drive the player with Viper Blocks, press Play.
+v0.1 was the Milestone-1 vertical slice; v0.2 adds textures, an uncapped frame rate and list-based script/texture pickers.
 
 ## Get the .exe
-**A) GitHub Releases (easiest):** open the repo's **Releases** page and download `ViperEngine-<version>.zip` -
-it contains `viper.exe` + `scenes/` + `scripts/`, ready to run. The `release` workflow publishes one when you
-push a `v...` tag (or run it manually from the Actions tab).
+**A) GitHub (no installs):** push this folder to a GitHub repo -> Actions tab -> `build-windows` -> download the
+`ViperEngine-v0.2-windows` artifact. It runs the logic tests first, then packages `viper.exe` + `scenes/` + `scripts/` + `textures/`.
 
-**B) Dev builds:** Actions tab -> `build-windows` -> download the artifact (latest pushed commit; tests run
-locally only now).
+**B) Locally:** install CMake and Visual Studio Build Tools (or MinGW-w64), then run `build_windows.bat`.
+CMake downloads and builds GLFW itself; `viper.exe` is statically linked (single file, no DLLs).
 
-**C) Locally:** install CMake and Visual Studio Build Tools (or MinGW-w64), then run `build_windows.bat`.
-CMake downloads and builds GLFW + Dear ImGui itself; `viper.exe` is statically linked (single file, no DLLs).
-
-Run `viper.exe` with no arguments for the project browser GUI: make a project (starter floor + player scene),
-open an existing one under `projects/`, or press **Compile project** to export a standalone game folder into
-`exports/<name>/` (engine exe + project + `assets/` + `market/` + `run.bat`). `run.bat` launches
-`viper.exe <name>.vscene --play`, so a compiled game boots straight into first person - no editor.
-`viper.exe path\to\scene.vscene` still opens the editor for development.
+Run `viper.exe` from the folder that contains `scenes/`, `scripts/` and `textures/`. Optional: `viper.exe path\to\other.vscene`.
 
 ## Controls
-**Edit mode:** hold RMB + WASD/QE fly (Shift = fast) | TAB select | arrows move X/Z, PgUp/PgDn move Y | R rotate |
-1/2/3 gizmo mode (move/scale/rotate) | F1-F6 tabs | Ctrl+Z/Y undo/redo | F2 save | F5 Play | M project browser | ESC quit.
-**Play mode (first person, same numbers as `play.py`):** WASD walk 4.5 / Shift run 8.0 | mouse look | SPACE jump 7.5 |
-LMB hit-scan (pushes crates) | E interact with the scripted unit you look at | F fog | fall damage + 4 s respawn.
-HUD: fps/PVS line, messages, `[E] interact`, `hud_left`/`hud_right`, health bar, crosshair. F5 or ESC stops
-the editor play session; in a compiled game ESC quits.
+**Edit mode:** hold RMB + WASD/QE fly (Shift = fast) | TAB select | arrows move X/Z, PgUp/PgDn move Y (0.5 steps) |
+R rotate 15 deg | 1 add cube | 2 add sphere | DELETE remove | **T texture picker | P script picker | - / = halve/double
+texture tiling** | F2 save scene | F3 toggle vsync | F5 Play | ESC quit.
+**Pickers (T / P):** a list pops up for the selected object. Up/Down/PgUp/PgDn/Home/End + Enter, or hover + click, mouse
+wheel scrolls, Esc (or clicking outside) closes. The current choice is marked "assigned"; `(none)` clears it. The script list is
+built from `scripts/*.vblocks`, so new script files appear automatically. Picking a texture sets the object's colour to white
+(colour multiplies the texture). F2 saves the choice into the .vscene.
 
-## Vipers Blocks gameplay API (scripts/*.vblocks)
-`on interact` runs when the player presses **E** while looking at that entity (within 4 m). Gameplay actions
-available to scripts:
-```
-damage_player N          message TEXT
-hud_left TEXT            hud_right TEXT
-```
-The VM calls back into the play mode through `BlocksGameApi` (`src/blocks/blocks.h`), so the headless logic
-tests still build without the engine.
+**Play mode:** WASD move, Shift run, SPACE jump, mouse turns, R respawn (from `Player.vblocks`) | F5 or ESC = Stop
+(scene is restored to how it was before Play).
 
 ## Viper Blocks (scripts/*.vblocks)
 This text format is the serialized block graph; it is compiled to bytecode and run by a real VM (`src/blocks`).
@@ -50,8 +35,18 @@ walk FWD RIGHT SPEED      (relative to facing; diagonals are normalised)   turn 
 jump FORCE                set_pos X Y Z   set_color R G B   print TEXT
 set_var NAME VALUE   change_var NAME VALUE   (use $name anywhere a number is expected)
 ```
-Attach with `script Player` in a `.vscene` entity. `controller 1` + `body dynamic` makes an entity walkable;
+Attach with the P picker in the editor, or `script Player` in a `.vscene` entity. `controller 1` + `body dynamic` makes an entity walkable;
 `follow DIST HEIGHT` makes the game camera follow it.
+
+## Textures
+`texture NAME` and `tile F` in a `.vscene` entity (or the T picker; `-`/`=` change tiling). Tiling is per world unit and follows
+the object's scale, so a 60x60 floor repeats instead of stretching. Built-in procedural textures: grass, dirt, stone, brick,
+wood, sand, metal, tiles, checker. Your own: drop `.png` / `.bmp` / `.tga` into `textures/` (PNG must be non-interlaced; no
+JPEG). A file named like a built-in replaces it. The decoders are written in-engine, no extra libraries.
+
+## Frame rate
+Uncapped by default (`glfwSwapInterval(0)`); the window title and the editor HUD show the live fps. F3 switches vsync on/off.
+Physics uses a clamped delta time with sub-stepping, so very high fps does not change game behaviour.
 
 ## Modules (src/)
 | folder | role | depends on |
@@ -61,27 +56,18 @@ Attach with `script Player` in a `.vscene` entity. `controller 1` + `body dynami
 | physics | gravity, AABB collision | scene |
 | blocks | Viper Blocks compiler + VM | scene, platform/input |
 | platform | window + input (GLFW lives ONLY here) | - |
-| gfx | GL loader, shaders, meshes | scene |
-| engine | editor/play loop wiring it all | everything |
-| gui | Dear ImGui wrapper + project browser (new/open/compile) | platform |
+| gfx | GL loader, shaders, meshes, textures, image decoders, 2D overlay + bitmap font | scene |
+| engine | editor/play loop, picker menus | everything |
 
-`tests/test_core.c` is a headless test of scene + blocks + physics (no GPU needed): `viper_test`.
+`tests/test_core.c` is a headless test of scene + blocks + physics + image decoding + menus (no GPU needed): `viper_test`.
+It reads `tests/data/` (PNG/BMP/TGA fixtures with reference pixels) and must be run from the project root.
 
-## Honest status of v0.4
-`build-windows` (GitHub Actions) is the compile check - there is no local Windows toolchain. The editor shell,
-baked lightmaps/PVS/probes, background bake job, first-person play mode and the `--play` standalone entry all
-build there. Still approximate vs the Python prototype: lightmaps/probes are top-down heightfield shelters,
-PVS uses entity AABBs as occluders, physics runs on one thread, and audio/animation are absent.
+## Honest status of v0.2
+Verified here (Linux, no GPU/window): 60+ headless tests pass (also under AddressSanitizer/UBSan), PNG/BMP/TGA decoders are pixel-exact
+against reference encoders and survived 3,200 corrupted-file fuzz runs, the whole engine compiles warning-free, and a scripted
+Edit -> pick texture -> pick script -> Esc -> Play session runs against a fake GLFW. The 2D overlay's vertex data was rasterised on
+the CPU to check the layout. NOT verified: real OpenGL output (textured shading, text and menu drawing on a real driver), the CMake
+GLFW download and the Windows build. Expect small first-run fixes, especially in the new shaders.
 
-## v0.4
-- Editor shell matching `editor.py`: 6 tabs (Import / Map / Bake OC / Lighting / Scripts / Marketplace),
-  assets + scene lists, per-tab inspector, status bar, viewport toolbar/overlay, gizmo, multi-select, undo/redo.
-- Baking: occlusion (3D PVS), lightmap (sun + AO + denoise), 3D probes - all on a worker thread with progress,
-  cancel and sidecar files (`<scene>.pvs`, `.lightmap`, `.probes`) that reload when the project opens.
-- Play mode (`play.py` parity): first-person camera at EYE 1.6, mouse look, WASD 4.5 / Shift 8, jump 7.5,
-  step-up 0.45, gravity 22, baked lighting/probes/PVS in the shader, dynamic bodies, interact raycast, health,
-  fall damage, respawn, HUD and crosshair, F fog.
-- Compiled game: `menu -> Compile project` copies exe + project + assets and writes `run.bat` that starts
-  `viper.exe <name>.vscene --play` in first person.
-- Still open (see `PARITY.md`): script editor syntax highlighting / find-replace, marketplace network downloads,
-  auto-res governor + GL timer queries + bench overlay, audio.
+Not yet: GUI panels (hierarchy / inspector / block editor), PBR/shadows/glTF, sphere/capsule/mesh colliders + raycasts,
+rotation-aware physics, audio, animation, in-game UI, templates, export tooling, click-to-select in the viewport.

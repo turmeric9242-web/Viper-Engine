@@ -10,8 +10,8 @@ int vgl_load(void) {
     LOAD(GetShaderInfoLog); LOAD(CreateProgram); LOAD(AttachShader); LOAD(LinkProgram);
     LOAD(GetProgramiv); LOAD(GetProgramInfoLog); LOAD(UseProgram); LOAD(DeleteShader);
     LOAD(GetUniformLocation); LOAD(UniformMatrix4fv); LOAD(Uniform3f); LOAD(Uniform1f);
+    LOAD(Uniform1i); LOAD(Uniform2f); LOAD(GenerateMipmap);
     LOAD(GenVertexArrays); LOAD(BindVertexArray); LOAD(GenBuffers); LOAD(BindBuffer);
     LOAD(BufferData); LOAD(VertexAttribPointer); LOAD(EnableVertexAttribArray);
-    LOAD(Uniform1i); LOAD(Uniform4f); LOAD(ActiveTexture); LOAD(TexImage3D);
     return 1;
 }

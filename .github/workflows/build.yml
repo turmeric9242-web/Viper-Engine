@@ -1,6 +1,5 @@
 name: build-windows
-on:
-  workflow_dispatch:
+on: [push, workflow_dispatch]
 jobs:
   build:
     runs-on: windows-latest
@@ -10,17 +9,16 @@ jobs:
         run: cmake -S . -B build -A x64
       - name: Build
         run: cmake --build build --config Release
+      - name: Logic tests
+        run: build\Release\viper_test.exe
       - name: Package
         run: |
           mkdir dist
           copy build\Release\viper.exe dist\
-          copy README.md dist\
-          copy PARITY.md dist\
           xcopy /E /I /Y scenes dist\scenes
           xcopy /E /I /Y scripts dist\scripts
-          xcopy /E /I /Y assets dist\assets
-          xcopy /E /I /Y market dist\market
+          xcopy /E /I /Y textures dist\textures
       - uses: actions/upload-artifact@v4
         with:
-          name: ViperEngine-v0.4-windows
+          name: ViperEngine-v0.2-windows
           path: dist

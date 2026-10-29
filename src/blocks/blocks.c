@@ -16,11 +16,10 @@
 typedef enum {
     OP_IF, OP_ELSE, OP_END, OP_REPEAT,
     OP_WALK, OP_TURN, OP_MOUSE_LOOK, OP_JUMP,
-    OP_SET_VAR, OP_CHANGE_VAR, OP_PRINT, OP_SET_COLOR, OP_SET_POS,
-    OP_DAMAGE, OP_MESSAGE, OP_HUD
+    OP_SET_VAR, OP_CHANGE_VAR, OP_PRINT, OP_SET_COLOR, OP_SET_POS
 } Op;
 typedef enum { C_KEY_DOWN, C_KEY_PRESSED, C_GROUNDED, C_GT, C_LT, C_EQ } Cond;
-typedef enum { H_START, H_UPDATE, H_KEY, H_INTERACT } HKind;
+typedef enum { H_START, H_UPDATE, H_KEY } HKind;
 
 typedef struct { int var; float val; } Arg;
 typedef struct {
@@ -40,12 +39,6 @@ static int program_count;
 static char var_names[MAX_VARS][32];
 static float var_vals[MAX_VARS];
 static int var_count;
-static BlocksGameApi game_api;
-
-void blocks_set_game_api(const BlocksGameApi *api) {
-    if (api) game_api = *api;
-    else memset(&game_api, 0, sizeof game_api);
-}
 
 static int var_intern(const char *name) {
     for (int i = 0; i < var_count; i++) if (!strcmp(var_names[i], name)) return i;
@@ -96,7 +89,6 @@ static int compile(Program *p, FILE *f, const char *path) {
             Handler *h = &p->h[p->nh++]; h->begin = p->n; h->key = 0;
             if (!strcmp(tok[1], "start")) h->kind = H_START;
             else if (!strcmp(tok[1], "update")) h->kind = H_UPDATE;
-            else if (!strcmp(tok[1], "interact")) h->kind = H_INTERACT;
             else if (!strcmp(tok[1], "key_pressed")) {
                 if (nt < 3 || (h->key = input_key_from_name(tok[2])) < 0) FAIL("unknown key");
                 h->kind = H_KEY;
@@ -145,18 +137,15 @@ static int compile(Program *p, FILE *f, const char *path) {
             static const struct { const char *name; Op op; int nargs; } ACTIONS[] = {
                 {"walk", OP_WALK, 3}, {"turn", OP_TURN, 1}, {"mouse_look", OP_MOUSE_LOOK, 1},
                 {"jump", OP_JUMP, 1}, {"set_var", OP_SET_VAR, 2}, {"change_var", OP_CHANGE_VAR, 2},
-                {"set_color", OP_SET_COLOR, 3}, {"set_pos", OP_SET_POS, 3}, {"print", OP_PRINT, 0},
-                {"damage_player", OP_DAMAGE, 1}, {"message", OP_MESSAGE, 0},
-                {"hud_left", OP_HUD, 0}, {"hud_right", OP_HUD, 0}
+                {"set_color", OP_SET_COLOR, 3}, {"set_pos", OP_SET_POS, 3}, {"print", OP_PRINT, 0}
             };
             int found = 0;
             for (size_t k = 0; k < sizeof ACTIONS / sizeof ACTIONS[0]; k++) {
                 if (strcmp(cmd, ACTIONS[k].name)) continue;
                 found = 1; in->op = ACTIONS[k].op;
-                if (in->op == OP_PRINT || in->op == OP_MESSAGE || in->op == OP_HUD) {
-                    const char *t = raw + strlen(cmd); while (isspace((unsigned char)*t)) t++;
+                if (in->op == OP_PRINT) {
+                    const char *t = raw + 5; while (isspace((unsigned char)*t)) t++;
                     strncpy(in->text, t, sizeof in->text - 1);
-                    if (in->op == OP_HUD) { in->a[0].var = -1; in->a[0].val = cmd[4] == 'r' ? 1.0f : 0.0f; }
                 } else if (in->op == OP_SET_VAR || in->op == OP_CHANGE_VAR) {
                     if (nt < 3) FAIL("variable blocks need a name and a value");
                     Arg tmp; in->a[0].var = -1; in->a[0].val = (float)var_intern(tok[1]);
@@ -240,9 +229,6 @@ static void exec(const Program *p, int begin, int end, Ctx *c) {
         case OP_SET_VAR: var_vals[(int)in->a[0].val] = av(&in->a[1]); break;
         case OP_CHANGE_VAR: var_vals[(int)in->a[0].val] += av(&in->a[1]); break;
         case OP_PRINT: VLOG("%s: %s", e->name, in->text); break;
-        case OP_MESSAGE: if (game_api.message) game_api.message(in->text); break;
-        case OP_HUD: if (game_api.hud) game_api.hud(in->text, (int)in->a[0].val); break;
-        case OP_DAMAGE: if (game_api.damage) game_api.damage(av(&in->a[0])); break;
         case OP_SET_COLOR: e->color = v3(av(&in->a[0]), av(&in->a[1]), av(&in->a[2])); break;
         case OP_SET_POS: e->pos = v3(av(&in->a[0]), av(&in->a[1]), av(&in->a[2])); e->vel = v3(0, 0, 0); break;
         }
@@ -251,25 +237,18 @@ static void exec(const Program *p, int begin, int end, Ctx *c) {
     if (steps >= MAX_STEPS) VLOG("%s: script step limit hit (infinite loop?)", e->name);
 }
 
-void blocks_run_entity(Scene *s, int i, const Input *in, float dt, int event) {
-    Entity *e;
-    const Program *p;
-    Ctx c;
-    if (i < 0 || i >= s->count) return;
-    e = &s->e[i];
-    if (!e->active || e->script_id < 0) return;
-    p = &programs[e->script_id];
-    c.self = e; c.in = in; c.dt = dt;
-    for (int h = 0; h < p->nh; h++) {
-        const Handler *H = &p->h[h];
-        int run = (event == BLOCKS_EV_START && H->kind == H_START) ||
-                  (event == BLOCKS_EV_UPDATE && H->kind == H_UPDATE) ||
-                  (event == BLOCKS_EV_INTERACT && H->kind == H_INTERACT) ||
-                  (event == BLOCKS_EV_KEYS && H->kind == H_KEY && in->pressed[H->key]);
-        if (run) exec(p, H->begin, H->end, &c);
-    }
-}
-
 void blocks_update_scene(Scene *s, const Input *in, float dt, int event) {
-    for (int i = 0; i < s->count; i++) blocks_run_entity(s, i, in, dt, event);
+    for (int i = 0; i < s->count; i++) {
+        Entity *e = &s->e[i];
+        if (!e->active || e->script_id < 0) continue;
+        const Program *p = &programs[e->script_id];
+        Ctx c = {e, in, dt};
+        for (int h = 0; h < p->nh; h++) {
+            const Handler *H = &p->h[h];
+            int run = (event == BLOCKS_EV_START && H->kind == H_START) ||
+                      (event == BLOCKS_EV_UPDATE && H->kind == H_UPDATE) ||
+                      (event == BLOCKS_EV_KEYS && H->kind == H_KEY && in->pressed[H->key]);
+            if (run) exec(p, H->begin, H->end, &c);
+        }
+    }
 }

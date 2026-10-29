@@ -1,5 +1,4 @@
 build/
 *.o
 *.exe
-exports/
-projects/
+*.tmp
