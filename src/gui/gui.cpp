@@ -232,7 +232,35 @@ static void unit_props(GuiEditor *ed) {
     }
     check1(ed, "checker", &e->checker);
     check1(ed, "controller", &e->controller);
-    text1(ed, "script", e->script, sizeof e->script);
+    {
+        char preview[80];
+        if (e->script[0]) snprintf(preview, sizeof preview, "%s.vblocks", e->script);
+        else snprintf(preview, sizeof preview, "(none)");
+        if (ImGui::BeginCombo("script", preview)) {
+            ed->script_scan_req = 1; /* pick up scripts added outside the editor */
+            if (ImGui::Selectable("(none)", !e->script[0])) {
+                e->script[0] = 0;
+                ed->script_changed = 1;
+                ed->push_undo = 1;
+            }
+            for (int i = 0; i < ed->nscripts; i++) {
+                char base[64];
+                snprintf(base, sizeof base, "%s", ed->scripts[i]);
+                char *dot = strstr(base, ".vblocks");
+                if (dot) *dot = 0;
+                bool sel = !strcmp(e->script, base);
+                char label[96];
+                snprintf(label, sizeof label, "%s##sc%d", ed->scripts[i], i);
+                if (ImGui::Selectable(label, sel)) {
+                    snprintf(e->script, sizeof e->script, "%s", base);
+                    ed->script_changed = 1;
+                    ed->push_undo = 1;
+                }
+            }
+            if (!ed->nscripts) ImGui::TextDisabled("no scripts/ folder");
+            ImGui::EndCombo();
+        }
+    }
     drag1(ed, "follow dist", &e->follow_dist, 0.1f);
     drag1(ed, "follow height", &e->follow_height, 0.1f);
     if (e->mesh == MESH_OBJ) {

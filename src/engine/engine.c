@@ -1617,6 +1617,11 @@ static void gui_sync_in(GuiEditor *ed) {
     if (ed->undo_pressed) do_undo();
     if (ed->redo_pressed) do_redo();
     if (ed->import_pressed) do_import();
+    if (ed->script_scan_req) scan_scripts();
+    if (ed->script_changed) {
+        blocks_bind_scene(&G.scene);
+        G.dirty = 1;
+    }
     if (ed->script_load_req) load_script(G.script_sel);
     if (ed->script_new_pressed) new_script();
     if (ed->script_save_pressed) save_script();

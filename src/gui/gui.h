@@ -65,6 +65,8 @@ typedef struct {
     char scripts[VIP_SCRIPT_MAX][64];
     int script_sel;
     int script_load_req;       /* engine reloads script_buf from script_sel */
+    int script_scan_req;       /* engine rescans scripts/ for the inspector combo */
+    int script_changed;        /* a unit's script was picked: engine rebinds blocks */
     char script_name[64];      /* file currently open ("" = none) */
     char script_buf[24000];
     int script_dirty;
